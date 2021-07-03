@@ -24,7 +24,6 @@
 
     const Core = window.Core;
     const dom = window.dom;
-    const QuerySet = window.QuerySet;
     const UI = window.UI;
     const document = window.document;
 
