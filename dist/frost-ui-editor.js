@@ -1,5 +1,5 @@
 /**
- * FrostUI-Editor v1.0.1
+ * FrostUI-Editor v1.0.2
  * https://github.com/elusivecodes/FrostUI-Editor
  */
 (function(global, factory) {
@@ -105,16 +105,6 @@
 
             this._observer.disconnect();
             this._observer = null;
-
-            dom.removeEventDelegate(this._toolbar, 'click.ui.editor', '[data-ui-action]');
-            dom.removeEventDelegate(this._toolbar, 'click.ui.editor', '[data-ui-command]');
-            dom.removeEvent(this._editor, 'input.ui.editor change.ui.editor keydown.ui.editor keyup.ui.editor click.ui.editor focus.ui.editor blur.ui.editor');
-            dom.removeEvent(this._editorBody, 'scroll.ui.editor');
-            dom.removeEventDelegate(this._popover, 'click.ui.editor', '[data-ui-action]');
-            dom.removeEvent(this._imgResize, 'mousedown.ui.editor');
-            dom.removeEvent(this._source, 'input.ui.editor change.ui.editor keydown.ui.editor');
-            dom.removeEvent(this._dropTarget, 'dragenter.ui.editor dragleave.ui.editor dragover.ui.editor drop.ui.editor');
-            dom.removeEvent(this._resizeBar, 'mousedown.ui.editor');
 
             dom.remove(this._container);
             dom.show(this._node);
