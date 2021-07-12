@@ -22,13 +22,13 @@ Object.assign(Editor.prototype, {
         });
 
         const foreLabel = dom.create('small', {
-            text: this.constructor.lang.dropdowns.foregroundColor,
-            class: this.constructor.classes.colorForeground
+            text: this.constructor.lang.dropdowns.colorForeground,
+            class: this.constructor.classes.colorLabel
         });
 
         const backLabel = dom.create('small', {
-            text: this.constructor.lang.dropdowns.backgroundColor,
-            class: this.constructor.classes.colorBackground
+            text: this.constructor.lang.dropdowns.colorBackground,
+            class: this.constructor.classes.colorLabel
         });
 
         dom.append(col1, foreLabel);
