@@ -116,6 +116,7 @@ Editor.classes = {
     editor: 'w-100 p-2 outline-0',
     editorBody: 'card-body d-flex p-0',
     editorContainer: 'position-relative d-flex',
+    editorScroll: 'd-block w-100 overflow-auto',
     formError: 'form-error',
     formGroup: 'mb-2',
     imgCursor: 'position-absolute translate-middle pe-none',

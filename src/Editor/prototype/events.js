@@ -89,6 +89,11 @@ Object.assign(Editor.prototype, {
 
         dom.addEvent(this._editor, 'input.ui.editor change.ui.editor', _ => {
             const html = dom.getHTML(this._editor);
+
+            if (html === dom.getHTML(this._node)) {
+                return;
+            }
+
             dom.setHTML(this._node, html);
             dom.setValue(this._source, html);
 

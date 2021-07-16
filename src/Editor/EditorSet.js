@@ -70,8 +70,11 @@ class EditorSet {
             return;
         }
 
-        dom.removeEvent(document.body, 'dragenter.ui.editor dragleave.ui.editor dragend.ui.editor');
-        dom.removeEvent(window, 'click.ui.editor resize.ui.editor');
+        dom.removeEvent(document.body, 'dragenter.ui.editor');
+        dom.removeEvent(document.body, 'dragleave.ui.editor');
+        dom.removeEvent(document.body, 'dragend.ui.editor');
+        dom.removeEvent(window, 'click.ui.editor');
+        dom.removeEvent(window, 'resize.ui.editor');
 
         this._running = false;
     }

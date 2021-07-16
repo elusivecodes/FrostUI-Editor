@@ -40,6 +40,7 @@ Object.assign(Editor.prototype, {
         dom.append(container, fileGroup);
         dom.append(container, urlGroup);
 
+        this._focusEditor();
         const range = this.constructor._getRange();
 
         this._modal = this.constructor._createModal({
@@ -122,6 +123,7 @@ Object.assign(Editor.prototype, {
         dom.append(container, urlGroup);
         dom.append(container, newWindowGroup);
 
+        this._focusEditor();
         const range = this.constructor._getRange();
 
         this._modal = this.constructor._createModal({
@@ -159,6 +161,7 @@ Object.assign(Editor.prototype, {
 
         dom.append(container, urlGroup);
 
+        this._focusEditor();
         const range = this.constructor._getRange();
 
         this._modal = this.constructor._createModal({

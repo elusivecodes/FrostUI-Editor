@@ -45,6 +45,10 @@ Object.assign(Editor, {
      * @param {Range} range The range to select.
      */
     _selectRange(range) {
+        if (!range) {
+            return;
+        }
+
         const selection = window.getSelection();
         selection.removeAllRanges();
         selection.addRange(range);

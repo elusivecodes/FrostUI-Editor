@@ -179,7 +179,7 @@ Object.assign(Editor.prototype, {
      * Show the editor.
      */
     _showEditor() {
-        dom.show(this._editorOuter);
+        dom.show(this._editorScroll);
         dom.hide(this._sourceOuter);
     },
 
@@ -188,7 +188,7 @@ Object.assign(Editor.prototype, {
      */
     _showSource() {
         dom.show(this._sourceOuter);
-        dom.hide(this._editorOuter);
+        dom.hide(this._editorScroll);
         dom.hide(this._imgHighlight);
 
         for (const { button, type } of this._buttons) {

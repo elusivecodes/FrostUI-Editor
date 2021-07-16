@@ -102,8 +102,11 @@ Object.assign(Editor.prototype, {
      * Render the editor elements.
      */
     _renderEditor() {
-        this._editorOuter = dom.create('div', {
-            class: 'w-100 overflow-auto'
+        this._editorScroll = dom.create('div', {
+            class: this.constructor.classes.editorScroll,
+            style: {
+                zIndex: 1
+            }
         });
 
         this._editorContainer = dom.create('div', {
@@ -164,8 +167,8 @@ Object.assign(Editor.prototype, {
         dom.append(this._editorContainer, this._imgCursor);
         dom.append(this._editorContainer, this._imgHighlight);
         dom.append(this._editorContainer, this._editor);
-        dom.append(this._editorOuter, this._editorContainer);
-        dom.append(this._editorBody, this._editorOuter);
+        dom.append(this._editorScroll, this._editorContainer);
+        dom.append(this._editorBody, this._editorScroll);
     },
 
     /**

@@ -1,5 +1,5 @@
 /**
- * FrostUI-Editor v1.0.6
+ * FrostUI-Editor v1.0.7
  * https://github.com/elusivecodes/FrostUI-Editor
  */
 (function(global, factory) {
@@ -76,7 +76,7 @@
             this._refreshToolbar();
             this._refreshLineNumbers();
 
-            EditorSet.add(this);
+            // EditorSet.add(this);
 
             dom.triggerEvent(this._node, 'init.ui.editor');
         }
@@ -210,8 +210,11 @@
                 return;
             }
 
-            dom.removeEvent(document.body, 'dragenter.ui.editor dragleave.ui.editor dragend.ui.editor');
-            dom.removeEvent(window, 'click.ui.editor resize.ui.editor');
+            dom.removeEvent(document.body, 'dragenter.ui.editor');
+            dom.removeEvent(document.body, 'dragleave.ui.editor');
+            dom.removeEvent(document.body, 'dragend.ui.editor');
+            dom.removeEvent(window, 'click.ui.editor');
+            dom.removeEvent(window, 'resize.ui.editor');
 
             this._running = false;
         }
@@ -989,6 +992,11 @@
 
             dom.addEvent(this._editor, 'input.ui.editor change.ui.editor', _ => {
                 const html = dom.getHTML(this._editor);
+
+                if (html === dom.getHTML(this._node)) {
+                    return;
+                }
+
                 dom.setHTML(this._node, html);
                 dom.setValue(this._source, html);
 
@@ -1409,7 +1417,7 @@
          * Show the editor.
          */
         _showEditor() {
-            dom.show(this._editorOuter);
+            dom.show(this._editorScroll);
             dom.hide(this._sourceOuter);
         },
 
@@ -1418,7 +1426,7 @@
          */
         _showSource() {
             dom.show(this._sourceOuter);
-            dom.hide(this._editorOuter);
+            dom.hide(this._editorScroll);
             dom.hide(this._imgHighlight);
 
             for (const { button, type } of this._buttons) {
@@ -1473,6 +1481,7 @@
             dom.append(container, fileGroup);
             dom.append(container, urlGroup);
 
+            this._focusEditor();
             const range = this.constructor._getRange();
 
             this._modal = this.constructor._createModal({
@@ -1555,6 +1564,7 @@
             dom.append(container, urlGroup);
             dom.append(container, newWindowGroup);
 
+            this._focusEditor();
             const range = this.constructor._getRange();
 
             this._modal = this.constructor._createModal({
@@ -1592,6 +1602,7 @@
 
             dom.append(container, urlGroup);
 
+            this._focusEditor();
             const range = this.constructor._getRange();
 
             this._modal = this.constructor._createModal({
@@ -2536,8 +2547,11 @@
          * Render the editor elements.
          */
         _renderEditor() {
-            this._editorOuter = dom.create('div', {
-                class: 'w-100 overflow-auto'
+            this._editorScroll = dom.create('div', {
+                class: this.constructor.classes.editorScroll,
+                style: {
+                    zIndex: 1
+                }
             });
 
             this._editorContainer = dom.create('div', {
@@ -2598,8 +2612,8 @@
             dom.append(this._editorContainer, this._imgCursor);
             dom.append(this._editorContainer, this._imgHighlight);
             dom.append(this._editorContainer, this._editor);
-            dom.append(this._editorOuter, this._editorContainer);
-            dom.append(this._editorBody, this._editorOuter);
+            dom.append(this._editorScroll, this._editorContainer);
+            dom.append(this._editorBody, this._editorScroll);
         },
 
         /**
@@ -2716,6 +2730,10 @@
          * @param {Range} range The range to select.
          */
         _selectRange(range) {
+            if (!range) {
+                return;
+            }
+
             const selection = window.getSelection();
             selection.removeAllRanges();
             selection.addRange(range);
@@ -3242,6 +3260,7 @@
         editor: 'w-100 p-2 outline-0',
         editorBody: 'card-body d-flex p-0',
         editorContainer: 'position-relative d-flex',
+        editorScroll: 'd-block w-100 overflow-auto',
         formError: 'form-error',
         formGroup: 'mb-2',
         imgCursor: 'position-absolute translate-middle pe-none',
