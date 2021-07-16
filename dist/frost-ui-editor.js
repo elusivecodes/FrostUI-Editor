@@ -76,7 +76,7 @@
             this._refreshToolbar();
             this._refreshLineNumbers();
 
-            // EditorSet.add(this);
+            EditorSet.add(this);
 
             dom.triggerEvent(this._node, 'init.ui.editor');
         }
