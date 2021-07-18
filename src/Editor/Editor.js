@@ -36,7 +36,7 @@ class Editor extends UI.BaseComponent {
         this._render();
         this._events();
 
-        const html = dom.getHTML(this._node);
+        const html = dom.getValue(this._node);
         dom.setHTML(this._editor, html);
         dom.setValue(this._source, html);
 
@@ -45,6 +45,7 @@ class Editor extends UI.BaseComponent {
         this._checkEmpty();
         this._refreshToolbar();
         this._refreshLineNumbers();
+        dom.blur(this._editor);
 
         EditorSet.add(this);
 

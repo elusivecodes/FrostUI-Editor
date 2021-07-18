@@ -1,5 +1,5 @@
 /**
- * FrostUI-Editor v1.0.7
+ * FrostUI-Editor v1.0.8
  * https://github.com/elusivecodes/FrostUI-Editor
  */
 (function(global, factory) {
@@ -66,7 +66,7 @@
             this._render();
             this._events();
 
-            const html = dom.getHTML(this._node);
+            const html = dom.getValue(this._node);
             dom.setHTML(this._editor, html);
             dom.setValue(this._source, html);
 
@@ -75,6 +75,7 @@
             this._checkEmpty();
             this._refreshToolbar();
             this._refreshLineNumbers();
+            dom.blur(this._editor);
 
             EditorSet.add(this);
 
@@ -993,11 +994,11 @@
             dom.addEvent(this._editor, 'input.ui.editor change.ui.editor', _ => {
                 const html = dom.getHTML(this._editor);
 
-                if (html === dom.getHTML(this._node)) {
+                if (html === dom.getValue(this._node)) {
                     return;
                 }
 
-                dom.setHTML(this._node, html);
+                dom.setValue(this._node, html);
                 dom.setValue(this._source, html);
 
                 this._checkEmpty();
@@ -1186,7 +1187,7 @@
                 this.insertHTML(html);
                 range.collapse();
 
-                dom.setHTML(this._node, html);
+                dom.setValue(this._node, html);
 
                 this._refreshLineNumbers();
                 this._showSource();
@@ -1246,7 +1247,7 @@
          * Check if the editor is empty and populate base markup.
          */
         _checkEmpty() {
-            const html = dom.getHTML(this._node).trim();
+            const html = dom.getValue(this._node).trim();
 
             if (html || html === '<br>') {
                 return;
@@ -1255,7 +1256,7 @@
             this._noMutate = true;
 
             dom.setHTML(this._editor, this.constructor._baseMarkup);
-            dom.setHTML(this._node, this.constructor._baseMarkup);
+            dom.setValue(this._node, this.constructor._baseMarkup);
             dom.setValue(this._source, this.constructor._baseMarkup);
         },
 
@@ -1275,7 +1276,7 @@
             }
 
             const html = dom.getHTML(this._editor);
-            dom.setHTML(this._node, html);
+            dom.setValue(this._node, html);
             dom.setValue(this._source, html);
         },
 
@@ -1426,7 +1427,7 @@
          */
         _showSource() {
             dom.show(this._sourceOuter);
-            dom.hide(this._editorScroll);
+            dom.setStyle(this._editorScroll, 'display', 'none', true);
             dom.hide(this._imgHighlight);
 
             for (const { button, type } of this._buttons) {
@@ -2477,7 +2478,7 @@
                 this._renderResize();
             }
 
-            const html = dom.getHTML(this._node);
+            const html = dom.getValue(this._node);
             dom.setHTML(this._editor, html);
             dom.setValue(this._source, html);
 

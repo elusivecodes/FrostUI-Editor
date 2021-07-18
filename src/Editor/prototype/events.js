@@ -90,11 +90,11 @@ Object.assign(Editor.prototype, {
         dom.addEvent(this._editor, 'input.ui.editor change.ui.editor', _ => {
             const html = dom.getHTML(this._editor);
 
-            if (html === dom.getHTML(this._node)) {
+            if (html === dom.getValue(this._node)) {
                 return;
             }
 
-            dom.setHTML(this._node, html);
+            dom.setValue(this._node, html);
             dom.setValue(this._source, html);
 
             this._checkEmpty();
@@ -283,7 +283,7 @@ Object.assign(Editor.prototype, {
             this.insertHTML(html);
             range.collapse();
 
-            dom.setHTML(this._node, html);
+            dom.setValue(this._node, html);
 
             this._refreshLineNumbers();
             this._showSource();

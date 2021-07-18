@@ -8,7 +8,7 @@ Object.assign(Editor.prototype, {
      * Check if the editor is empty and populate base markup.
      */
     _checkEmpty() {
-        const html = dom.getHTML(this._node).trim();
+        const html = dom.getValue(this._node).trim();
 
         if (html || html === '<br>') {
             return;
@@ -17,7 +17,7 @@ Object.assign(Editor.prototype, {
         this._noMutate = true;
 
         dom.setHTML(this._editor, this.constructor._baseMarkup);
-        dom.setHTML(this._node, this.constructor._baseMarkup);
+        dom.setValue(this._node, this.constructor._baseMarkup);
         dom.setValue(this._source, this.constructor._baseMarkup);
     },
 
@@ -37,7 +37,7 @@ Object.assign(Editor.prototype, {
         }
 
         const html = dom.getHTML(this._editor);
-        dom.setHTML(this._node, html);
+        dom.setValue(this._node, html);
         dom.setValue(this._source, html);
     },
 
@@ -188,7 +188,7 @@ Object.assign(Editor.prototype, {
      */
     _showSource() {
         dom.show(this._sourceOuter);
-        dom.hide(this._editorScroll);
+        dom.setStyle(this._editorScroll, 'display', 'none', true);
         dom.hide(this._imgHighlight);
 
         for (const { button, type } of this._buttons) {

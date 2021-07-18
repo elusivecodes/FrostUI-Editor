@@ -32,7 +32,7 @@ Object.assign(Editor.prototype, {
             this._renderResize();
         }
 
-        const html = dom.getHTML(this._node);
+        const html = dom.getValue(this._node);
         dom.setHTML(this._editor, html);
         dom.setValue(this._source, html);
 
