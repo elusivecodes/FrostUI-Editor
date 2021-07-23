@@ -1,5 +1,5 @@
 /**
- * FrostUI-Editor v1.0.8
+ * FrostUI-Editor v1.0.9
  * https://github.com/elusivecodes/FrostUI-Editor
  */
 (function(global, factory) {

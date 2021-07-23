@@ -88,11 +88,15 @@ class Editor extends UI.BaseComponent {
         this._toolbar = null;
         this._editorBody = null;
         this._editorContainer = null;
+        this._editorScroll = null;
         this._editor = null;
         this._imgHighlight = null;
         this._imgCursor = null;
         this._imgResize = null;
+        this._imgSizeInfo = null;
+        this._sourceOuter = null;
         this._sourceContainer = null;
+        this._sourceScroll = null;
         this._lineNumbers = null;
         this._source = null;
         this._popover = null;

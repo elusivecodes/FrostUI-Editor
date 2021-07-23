@@ -23,6 +23,10 @@ Object.assign(Editor.prototype, {
      * Attach drop events.
      */
     _eventsDrop() {
+        dom.addEventDelegate(this._editor, 'dragstart.ui.editor', 'img', e => {
+            e.preventDefault();
+        });
+
         dom.addEvent(this._dropTarget, 'dragenter.ui.editor', _ => {
             dom.addClass(this._dropText, this.constructor.classes.dropHover);
             dom.setText(this._dropText, this.constructor.lang.drop.drop);
@@ -34,10 +38,6 @@ Object.assign(Editor.prototype, {
         });
 
         dom.addEvent(this._dropTarget, 'dragover.ui.editor', e => {
-            e.preventDefault();
-        });
-
-        dom.addEventDelegate(this._editor, 'dragstart.ui.editor', 'img', e => {
             e.preventDefault();
         });
 
@@ -74,18 +74,40 @@ Object.assign(Editor.prototype, {
      * Attach editor events.
      */
     _eventsEditor() {
-        this._observer = new MutationObserver(_ => {
-            if (this._noMutate) {
-                this._noMutate = false;
+        dom.addEvent(this._editor, 'focus.ui.editor', e => {
+            if (this._noFocus) {
+                this._noFocus = false;
                 return;
             }
 
-            dom.triggerEvent(this._editor, 'change.ui.editor');
+            const range = this.constructor._getRange();
 
-            this._cleanupStyles();
+            if (range && !range.collapsed && !e.relatedTarget) {
+                range.collapse();
+            }
+
+            setTimeout(_ => {
+                const selection = window.getSelection();
+
+                if (!dom.hasDescendent(this._editor, selection.anchorNode)) {
+                    return;
+                }
+
+                this._refreshCursor();
+                this._refreshToolbar();
+            }, 0);
+
+            dom.triggerEvent(this._node, 'focus.ui.editor');
         });
 
-        this._observer.observe(this._editor, { attributes: true, childList: true, subtree: true });
+        dom.addEvent(this._editor, 'blur.ui.editor', _ => {
+            if (this._noBlur) {
+                this._noBlur = false;
+                return;
+            }
+
+            dom.triggerEvent(this._node, 'blur.ui.editor');
+        });
 
         dom.addEvent(this._editor, 'input.ui.editor change.ui.editor', _ => {
             const html = dom.getHTML(this._editor);
@@ -134,50 +156,24 @@ Object.assign(Editor.prototype, {
             this._refreshPopover(e.currentTarget, e);
         }, true);
 
-        dom.addEvent(this._editor, 'focus.ui.editor', e => {
-            if (this._noFocus) {
-                this._noFocus = false;
+        this._observer = new MutationObserver(_ => {
+            if (this._noMutate) {
+                this._noMutate = false;
                 return;
             }
 
-            const range = this.constructor._getRange();
+            dom.triggerEvent(this._editor, 'change.ui.editor');
 
-            if (range && !range.collapsed && !e.relatedTarget) {
-                range.collapse();
-            }
-
-            setTimeout(_ => {
-                const selection = window.getSelection();
-
-                if (!dom.hasDescendent(this._editor, selection.anchorNode)) {
-                    return;
-                }
-
-                this._refreshCursor();
-                this._refreshToolbar();
-            }, 0);
-
-            dom.triggerEvent(this._node, 'focus.ui.editor');
+            this._cleanupStyles();
         });
 
-        dom.addEvent(this._editor, 'blur.ui.editor', _ => {
-            if (this._noBlur) {
-                this._noBlur = false;
-                return;
-            }
-
-            dom.triggerEvent(this._node, 'blur.ui.editor');
-        });
+        this._observer.observe(this._editor, { attributes: true, childList: true, subtree: true });
     },
 
     /**
      * Attach popover events.
      */
     _eventsPopover() {
-        dom.addEvent(this._editorBody, 'scroll.ui.editor', _ => {
-            this._removePopover();
-        });
-
         dom.addEventDelegate(this._popover, 'click.ui.editor', '[data-ui-action]', e => {
             const action = dom.getDataset(e.currentTarget, 'uiAction');
 
@@ -228,6 +224,10 @@ Object.assign(Editor.prototype, {
                 originalWidth = null;
             }
         ));
+
+        dom.addEvent(this._editorBody, 'scroll.ui.editor', _ => {
+            this._removePopover();
+        });
     },
 
     /**
@@ -264,11 +264,6 @@ Object.assign(Editor.prototype, {
             this._refreshLineNumbers();
         });
 
-        dom.addEvent(this._source, 'scroll.ui.editor', DOM.debounce(_ => {
-            const scrollY = dom.getScrollY(this._source);
-            dom.setStyle(this._lineNumbers, 'marginTop', `${-scrollY}px`);
-        }));
-
         dom.addEvent(this._source, 'change.ui.editor', _ => {
             this._noMutate = true;
 
@@ -296,6 +291,11 @@ Object.assign(Editor.prototype, {
                 this._settings.keyDownSource.bind(this)(e);
             });
         }
+
+        dom.addEvent(this._source, 'scroll.ui.editor', DOM.debounce(_ => {
+            const scrollY = dom.getScrollY(this._source);
+            dom.setStyle(this._lineNumbers, 'marginTop', `${-scrollY}px`);
+        }));
     },
 
     /**
