@@ -20,6 +20,10 @@
                     <button class="btn btn-primary ripple mb-0" id="editorInit" type="button">Init</button>
                     <button class="btn btn-danger ripple mb-0" id="editorDispose" type="button">Dispose</button>
                 </div>
+                <div class="btn-group">
+                    <button class="btn btn-success ripple mb-0" id="editorEnable" type="button">Enable</button>
+                    <button class="btn btn-warning ripple mb-0" id="editorDisable" type="button">Disable</button>
+                </div>
             </div>
         </div>
     </div>
@@ -27,6 +31,8 @@
         const editor = dom.findOne('#editor');
         const editorInit = dom.findOne('#editorInit');
         const editorDispose = dom.findOne('#editorDispose');
+        const editorEnable = dom.findOne('#editorEnable');
+        const editorDisable = dom.findOne('#editorDisable');
 
         UI.Editor.init(editor);
 
@@ -36,6 +42,14 @@
 
         dom.addEvent(editorDispose, 'click', e => {
             UI.Editor.init(editor).dispose();
+        });
+
+        dom.addEvent(editorEnable, 'click', e => {
+            UI.Editor.init(editor).enable();
+        });
+
+        dom.addEvent(editorDisable, 'click', e => {
+            UI.Editor.init(editor).disable();
         });
 
         dom.triggerEvent(editorInit, 'click');

@@ -130,12 +130,13 @@ Editor.plugins = {
         action() {
             if (dom.isVisible(this._sourceContainer)) {
                 this._showEditor();
-                this._refreshToolbar();
                 dom.focus(this._editor);
             } else {
                 this._showSource();
                 dom.focus(this._source);
             }
+
+            this._refreshToolbar();
         }
     },
     strikethrough: {

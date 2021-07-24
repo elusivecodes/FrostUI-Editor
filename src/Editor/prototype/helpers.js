@@ -48,6 +48,10 @@ Object.assign(Editor.prototype, {
      * @returns {Editor} The Editor.
      */
     _execCommand(command, value) {
+        if (dom.is(this._node, ':disabled')) {
+            return this;
+        }
+
         this._focusEditor();
 
         document.execCommand('styleWithCSS', false, this.constructor._cssCommands.includes(command));
@@ -98,6 +102,23 @@ Object.assign(Editor.prototype, {
     },
 
     /**
+     * Refresh the editor disabled.
+     */
+    _refreshDisabled() {
+        if (dom.is(this._node, ':disabled')) {
+            dom.addClass(this._editor, this.constructor.classes.editorDisabled);
+            dom.setStyle(this._editor, 'opacity', .5);
+            dom.removeAttribute(this._editor, 'contenteditable');
+            dom.setAttribute(this._source, 'disabled', true);
+        } else {
+            dom.removeClass(this._editor, this.constructor.classes.editorDisabled);
+            dom.setStyle(this._editor, 'opacity', '');
+            dom.setAttribute(this._editor, 'contenteditable', true);
+            dom.removeAttribute(this._source, 'disabled');
+        }
+    },
+
+    /**
      * Refresh the source line numbers.
      */
     _refreshLineNumbers() {
@@ -128,8 +149,10 @@ Object.assign(Editor.prototype, {
      */
     _refreshToolbar() {
         this._focusEditor();
+        const isDisabled = dom.is(this._node, ':disabled');
+        const isSource = dom.isVisible(this._sourceContainer);
 
-        for (const { button, data } of this._buttons) {
+        for (const { button, data, type } of this._buttons) {
             if ('setContent' in data) {
                 const content = data.setContent.bind(this)();
                 dom.setHTML(button, content);
@@ -148,7 +171,11 @@ Object.assign(Editor.prototype, {
                 dom.removeClass(button, 'active');
             }
 
-            if ('disableCheck' in data && data.disableCheck.bind(this)()) {
+            if (
+                isDisabled ||
+                (isSource && !['source', 'fullScreen'].includes(type)) ||
+                ('disableCheck' in data && data.disableCheck.bind(this)())
+            ) {
                 dom.addClass(button, 'disabled');
             } else {
                 dom.removeClass(button, 'disabled');
@@ -168,7 +195,7 @@ Object.assign(Editor.prototype, {
      * Show the drop target.
      */
     _showDropTarget() {
-        if (dom.isVisible(this._sourceContainer)) {
+        if (dom.is(this._node, ':disabled') || dom.isVisible(this._sourceContainer)) {
             return;
         }
 
@@ -190,12 +217,6 @@ Object.assign(Editor.prototype, {
         dom.show(this._sourceOuter);
         dom.setStyle(this._editorScroll, 'display', 'none', true);
         dom.hide(this._imgHighlight);
-
-        for (const { button, type } of this._buttons) {
-            if (!['source', 'fullScreen'].includes(type)) {
-                dom.addClass(button, 'disabled');
-            }
-        }
     }
 
 });

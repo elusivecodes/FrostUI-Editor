@@ -1,5 +1,5 @@
 /**
- * FrostUI-Editor v1.0.9
+ * FrostUI-Editor v1.1.0
  * https://github.com/elusivecodes/FrostUI-Editor
  */
 (function(global, factory) {
@@ -80,6 +80,20 @@
             EditorSet.add(this);
 
             dom.triggerEvent(this._node, 'init.ui.editor');
+
+            this._refreshDisabled();
+        }
+
+        /**
+         * Disable the Editor.
+         * @returns {Editor} The Editor.
+         */
+        disable() {
+            dom.setAttribute(this._node, 'disabled', true);
+            this._refreshDisabled();
+            this._refreshToolbar();
+
+            return this;
         }
 
         /**
@@ -138,6 +152,18 @@
             this._currentNode = null;
 
             super.dispose();
+        }
+
+        /**
+         * Enable the Editor.
+         * @returns {Editor} The Editor.
+         */
+        enable() {
+            dom.removeAttribute(this._node, 'disabled');
+            this._refreshDisabled();
+            this._refreshToolbar();
+
+            return this;
         }
 
     }
@@ -406,12 +432,13 @@
             action() {
                 if (dom.isVisible(this._sourceContainer)) {
                     this._showEditor();
-                    this._refreshToolbar();
                     dom.focus(this._editor);
                 } else {
                     this._showSource();
                     dom.focus(this._source);
                 }
+
+                this._refreshToolbar();
             }
         },
         strikethrough: {
@@ -1291,6 +1318,10 @@
          * @returns {Editor} The Editor.
          */
         _execCommand(command, value) {
+            if (dom.is(this._node, ':disabled')) {
+                return this;
+            }
+
             this._focusEditor();
 
             document.execCommand('styleWithCSS', false, this.constructor._cssCommands.includes(command));
@@ -1341,6 +1372,23 @@
         },
 
         /**
+         * Refresh the editor disabled.
+         */
+        _refreshDisabled() {
+            if (dom.is(this._node, ':disabled')) {
+                dom.addClass(this._editor, this.constructor.classes.editorDisabled);
+                dom.setStyle(this._editor, 'opacity', .5);
+                dom.removeAttribute(this._editor, 'contenteditable');
+                dom.setAttribute(this._source, 'disabled', true);
+            } else {
+                dom.removeClass(this._editor, this.constructor.classes.editorDisabled);
+                dom.setStyle(this._editor, 'opacity', '');
+                dom.setAttribute(this._editor, 'contenteditable', true);
+                dom.removeAttribute(this._source, 'disabled');
+            }
+        },
+
+        /**
          * Refresh the source line numbers.
          */
         _refreshLineNumbers() {
@@ -1371,8 +1419,10 @@
          */
         _refreshToolbar() {
             this._focusEditor();
+            const isDisabled = dom.is(this._node, ':disabled');
+            const isSource = dom.isVisible(this._sourceContainer);
 
-            for (const { button, data } of this._buttons) {
+            for (const { button, data, type } of this._buttons) {
                 if ('setContent' in data) {
                     const content = data.setContent.bind(this)();
                     dom.setHTML(button, content);
@@ -1391,7 +1441,11 @@
                     dom.removeClass(button, 'active');
                 }
 
-                if ('disableCheck' in data && data.disableCheck.bind(this)()) {
+                if (
+                    isDisabled ||
+                    (isSource && !['source', 'fullScreen'].includes(type)) ||
+                    ('disableCheck' in data && data.disableCheck.bind(this)())
+                ) {
                     dom.addClass(button, 'disabled');
                 } else {
                     dom.removeClass(button, 'disabled');
@@ -1411,7 +1465,7 @@
          * Show the drop target.
          */
         _showDropTarget() {
-            if (dom.isVisible(this._sourceContainer)) {
+            if (dom.is(this._node, ':disabled') || dom.isVisible(this._sourceContainer)) {
                 return;
             }
 
@@ -1433,12 +1487,6 @@
             dom.show(this._sourceOuter);
             dom.setStyle(this._editorScroll, 'display', 'none', true);
             dom.hide(this._imgHighlight);
-
-            for (const { button, type } of this._buttons) {
-                if (!['source', 'fullScreen'].includes(type)) {
-                    dom.addClass(button, 'disabled');
-                }
-            }
         }
 
     });
@@ -2534,7 +2582,8 @@
             this._dropTarget = dom.create('div', {
                 class: this.constructor.classes.dropTarget,
                 style: {
-                    minHeight: '100%'
+                    minHeight: '100%',
+                    zIndex: 1
                 }
             });
 
@@ -2571,9 +2620,6 @@
                 style: {
                     minHeight: '100%',
                     fontFamily: this._settings.defaultFont
-                },
-                attributes: {
-                    contenteditable: true
                 }
             });
 
@@ -3265,6 +3311,7 @@
         editor: 'w-100 p-2 outline-0',
         editorBody: 'card-body d-flex p-0',
         editorContainer: 'position-relative d-flex',
+        editorDisabled: 'bg-light pe-none',
         editorScroll: 'd-block w-100 overflow-auto',
         formError: 'form-error',
         formGroup: 'mb-2',

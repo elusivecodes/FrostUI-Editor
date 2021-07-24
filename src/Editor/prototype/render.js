@@ -84,7 +84,8 @@ Object.assign(Editor.prototype, {
         this._dropTarget = dom.create('div', {
             class: this.constructor.classes.dropTarget,
             style: {
-                minHeight: '100%'
+                minHeight: '100%',
+                zIndex: 1
             }
         });
 
@@ -121,9 +122,6 @@ Object.assign(Editor.prototype, {
             style: {
                 minHeight: '100%',
                 fontFamily: this._settings.defaultFont
-            },
-            attributes: {
-                contenteditable: true
             }
         });
 

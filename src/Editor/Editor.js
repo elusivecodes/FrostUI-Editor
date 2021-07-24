@@ -50,6 +50,20 @@ class Editor extends UI.BaseComponent {
         EditorSet.add(this);
 
         dom.triggerEvent(this._node, 'init.ui.editor');
+
+        this._refreshDisabled();
+    }
+
+    /**
+     * Disable the Editor.
+     * @returns {Editor} The Editor.
+     */
+    disable() {
+        dom.setAttribute(this._node, 'disabled', true);
+        this._refreshDisabled();
+        this._refreshToolbar();
+
+        return this;
     }
 
     /**
@@ -108,6 +122,18 @@ class Editor extends UI.BaseComponent {
         this._currentNode = null;
 
         super.dispose();
+    }
+
+    /**
+     * Enable the Editor.
+     * @returns {Editor} The Editor.
+     */
+    enable() {
+        dom.removeAttribute(this._node, 'disabled');
+        this._refreshDisabled();
+        this._refreshToolbar();
+
+        return this;
     }
 
 }
