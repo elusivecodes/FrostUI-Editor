@@ -22,6 +22,7 @@
     </div>
     <script>
         const editor = dom.findOne('#editor');
+        const events = dom.findOne('#events');
 
         dom.addEvent(editor, 'init.ui.editor focus.ui.editor blur.ui.editor keydown.ui.editor keyup.ui.editor change.ui.editor', e => {
             const div = dom.create('div', {
