@@ -1,106 +1,330 @@
-/**
- * FrostUI-Editor v1.1.5
- * https://github.com/elusivecodes/FrostUI-Editor
- */
-(function(global, factory) {
-    'use strict';
+(function (global, factory) {
+    typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports, require('@fr0st/ui'), require('@fr0st/query')) :
+    typeof define === 'function' && define.amd ? define(['exports', '@fr0st/ui', '@fr0st/query'], factory) :
+    (global = typeof globalThis !== 'undefined' ? globalThis : global || self, factory(global.UI = global.UI || {}, global.UI, global.fQuery));
+})(this, (function (exports, ui, $) { 'use strict';
 
-    if (typeof module === 'object' && typeof module.exports === 'object') {
-        module.exports = factory;
-    } else {
-        factory(global);
+    /**
+     * Get the current selected range.
+     * @return {Range} The Range object.
+     */
+    function getRange() {
+        const selection = window.getSelection();
+
+        if (!selection.rangeCount) {
+            return null;
+        }
+
+        return selection.getRangeAt(0);
+    }
+    /**
+     * Restore the selection from selection markers.
+     * @param {object} markers The selection markers.
+     */
+    function restoreSelection({ start, end } = {}) {
+        if (!start && !end) {
+            return;
+        }
+
+        const range = $.createRange();
+
+        if (start && $.isConnected(start)) {
+            range.setStartAfter(start);
+            $.detach(start);
+        }
+
+        if (end && $.isConnected(end)) {
+            range.setEndBefore(end);
+            $.detach(end);
+        }
+
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+    }
+    /**
+     * Save the selection and return the selection markers.
+     * @return {object} The selection markers.
+     */
+    function saveSelection() {
+        const selection = window.getSelection();
+
+        let start;
+        let end;
+        if (selection.rangeCount) {
+            start = $.createText('');
+            end = $.createText('');
+
+            const range = selection.getRangeAt(0);
+            const rangeStart = range.cloneRange();
+            const rangeEnd = range.cloneRange();
+
+            rangeStart.collapse(true);
+            rangeEnd.collapse(false);
+
+            rangeStart.insertNode(start);
+            rangeEnd.insertNode(end);
+        }
+
+        return { start, end };
+    }
+    /**
+     * Select a node.
+     * @param {HTMLElement} node The element to select.
+     * @return {Range} The Range object.
+     */
+    function selectNode(node) {
+        const range = $.createRange();
+        range.selectNode(node);
+
+        selectRange(range);
+
+        return range;
+    }
+    /**
+     * Select a range.
+     * @param {Range} range The range to select.
+     */
+    function selectRange(range) {
+        if (!range) {
+            return;
+        }
+
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
     }
 
-})(window, function(window) {
-    'use strict';
+    let running = false;
+    let dragCount = 0;
+    const editors = new Set();
 
-    if (!window) {
-        throw new Error('FrostUI-Editor requires a Window.');
+    /**
+    * Add an Editor.
+    * @param {Editor} editor The editor to add.
+    */
+    function addEditor(editor) {
+        editors.add(editor);
+
+        if (running) {
+            return;
+        }
+
+        dragCount = 0;
+
+        $.addEvent(document.body, 'dragenter.ui.editor', (_) => {
+            if (dragCount === 0) {
+                for (const editor of editors) {
+                    editor._showDropTarget();
+                }
+            }
+
+            dragCount++;
+        });
+
+        $.addEvent(document.body, 'dragleave.ui.editor', (_) => {
+            dragCount--;
+
+            if (dragCount === 0) {
+                for (const editor of editors) {
+                    editor._resetDropText();
+                    $.hide(editor._dropTarget);
+                }
+            }
+        });
+
+        $.addEvent(document.body, 'dragend.ui.editor drop.ui.editor', (_) => {
+            dragCount = 0;
+        });
+
+        $.addEvent(document, 'selectionchange.ui.editor', $.debounce(() => {
+            const range = getRange();
+
+            if (!range) {
+                return;
+            }
+
+            const ancestor = range.commonAncestorContainer;
+
+            for (const editor of editors) {
+                if (!$.isSame(editor._editor, ancestor) && !$.hasDescendent(editor._editor, ancestor)) {
+                    editor._removePopover();
+                    continue;
+                }
+
+                editor._lastRange = range;
+                editor._refreshCursor();
+                editor._refreshToolbar();
+            }
+        }));
+
+        $.addEvent(document, 'beforeinput.ui.editor', (e) => {
+            switch (e.inputType) {
+                case 'historyUndo':
+                case 'historyRedo':
+                    break;
+                default:
+                    return;
+            }
+
+            for (const editor of editors) {
+                editor._observe(false);
+            }
+        });
+
+        $.addEvent(document, 'input.ui.editor', (e) => {
+            switch (e.inputType) {
+                case 'historyUndo':
+                case 'historyRedo':
+                    break;
+                default:
+                    return;
+            }
+
+            for (const editor of editors) {
+                if ($.isSame(editor._editor, document.activeElement)) {
+                    const { html } = editor._history.at(-1);
+
+                    $.setHTML(editor._editor, html);
+                    $.blur(editor._editor);
+                }
+
+                editor._observe();
+            }
+        }, { capture: true });
+
+        $.addEvent(window, 'click.ui.editor', (_) => {
+            for (const editor of editors) {
+                editor._removePopover();
+            }
+        });
+
+        $.addEvent(window, 'resize.ui.editor', $.debounce((_) => {
+            for (const editor of editors) {
+                if (editor._currentNode && $.is(editor._currentNode, 'img')) {
+                    editor._highlightImage(editor._currentNode);
+                }
+
+                editor._refreshLineNumbers();
+            }
+        }));
+
+        running = true;
     }
+    /**
+     * Remove a Editor.
+     * @param {Editor} editor The editor to remove.
+     */
+    function removeEditor(editor) {
+        editors.delete(editor);
 
-    if (!('UI' in window)) {
-        throw new Error('FrostUI-Editor requires FrostUI.');
+        if (editors.size) {
+            return;
+        }
+
+        $.removeEvent(document.body, 'dragenter.ui.editor');
+        $.removeEvent(document.body, 'dragleave.ui.editor');
+        $.removeEvent(document.body, 'dragend.ui.editor');
+        $.removeEvent(document, 'selectionchange.ui.editor');
+        $.removeEvent(document, 'beforeinput.ui.editor');
+        $.removeEvent(document, 'input.ui.editor');
+        $.removeEvent(window, 'click.ui.editor');
+        $.removeEvent(window, 'resize.ui.editor');
+
+        running = false;
     }
-
-    const Core = window.Core;
-    const DOM = window.DOM;
-    const dom = window.dom;
-    const UI = window.UI;
-    const document = window.document;
+    /**
+     * Reset the drag count.
+     */
+    function resetDragCount() {
+        dragCount = 0;
+    }
 
     /**
      * Editor
      * @class
      */
-    class Editor extends UI.BaseComponent {
-
+    class Editor extends ui.BaseComponent {
         /**
          * New Editor constructor.
          * @param {HTMLElement} node The input node.
-         * @param {object} [settings] The options to create the Editor with.
-         * @returns {Editor} A new Editor object.
+         * @param {object} [options] The options to create the Editor with.
          */
-        constructor(node, settings) {
-            super(node, settings);
+        constructor(node, options) {
+            super(node, options);
 
-            if (!this._settings.buttons) {
-                this._settings.buttons = this.constructor.buttons;
+            if (!this._options.buttons) {
+                this._options.buttons = this.constructor.buttons;
             }
 
-            if (!this._settings.fonts) {
-                this._settings.fonts = this.constructor.fonts;
+            if (!this._options.fonts) {
+                this._options.fonts = this.constructor.fonts;
             }
 
-            this._settings.fonts = this._settings.fonts.filter(font => {
-                return document.fonts.check(`12px ${font}`);
-            });
+            this._options.fonts = this._options.fonts.filter((font) => document.fonts.check(`12px ${font}`));
 
-            if (!this._settings.fonts.includes(this._settings.defaultFont)) {
-                this._settings.defaultFont = this._settings.fonts.slice().shift();
+            if (!this._options.fonts.includes(this._options.defaultFont)) {
+                this._options.defaultFont = this._options.fonts.slice().shift();
             }
 
             this._buttons = [];
-
-            this._id = 'editor' + this.constructor._generateId();
+            this._history = [];
+            this._redoHistory = [];
 
             this._render();
-            this._events();
 
-            const html = dom.getValue(this._node);
-            dom.setHTML(this._editor, html);
-            dom.setValue(this._source, html);
+            const html = $.getValue(this._node);
+            $.setHTML(this._editor, html);
+            $.setValue(this._source, html);
+
+            const range = getRange();
 
             this._focusEditor();
             this._execCommand('defaultParagraphSeparator', 'p');
             this._checkEmpty();
             this._refreshToolbar();
-            this._refreshLineNumbers();
-            dom.blur(this._editor);
 
-            EditorSet.add(this);
+            selectRange(range);
 
-            dom.triggerEvent(this._node, 'init.ui.editor');
-
+            this._events();
+            this._normalize();
+            this._updateValue();
             this._refreshDisabled();
+
+            addEditor(this);
+
+            $.triggerEvent(this._node, 'init.ui.editor');
+        }
+
+        /**
+         * Set the background color.
+         * @param {string} value The background color.
+         */
+        backColor(value) {
+            this._execCommand('backColor', value);
+        }
+
+        /**
+         * Toggle bold state.
+         */
+        bold() {
+            this._execCommand('bold');
         }
 
         /**
          * Disable the Editor.
-         * @returns {Editor} The Editor.
          */
         disable() {
-            dom.setAttribute(this._node, 'disabled', true);
+            $.setAttribute(this._node, { disabled: true });
             this._refreshDisabled();
             this._refreshToolbar();
-
-            return this;
         }
 
         /**
          * Dispose the Editor.
          */
         dispose() {
-            EditorSet.remove(this);
+            removeEditor(this);
 
             if (this._popper) {
                 this._popper.dispose();
@@ -108,23 +332,24 @@
             }
 
             if (this._modal) {
-                UI.Modal.init(this._modal).dispose();
-                dom.remove(this._modal);
+                ui.Modal.init(this._modal).dispose();
+                $.remove(this._modal);
                 this._modal = null;
             }
 
             if (this._fullScreen) {
-                UI.Modal.init(this._fullScreen).dispose();
-                dom.remove(this._fullScreen);
+                ui.Modal.init(this._fullScreen).dispose();
+                $.remove(this._fullScreen);
                 this._fullScreen = null;
             }
 
             this._observer.disconnect();
             this._observer = null;
+            this._observe = null;
 
-            dom.remove(this._container);
-            dom.show(this._node);
-            dom.removeAttribute(this._node, 'tabindex');
+            $.remove(this._container);
+            $.show(this._node);
+            $.removeAttribute(this._node, 'tabindex');
 
             this._buttons = null;
 
@@ -137,7 +362,7 @@
             this._imgHighlight = null;
             this._imgCursor = null;
             this._imgResize = null;
-            this._imgSizeInfo = null;
+            this._imgSize = null;
             this._sourceOuter = null;
             this._sourceContainer = null;
             this._sourceScroll = null;
@@ -150,114 +375,259 @@
             this._dropText = null;
             this._resizeBar = null;
             this._currentNode = null;
+            this._lastRange = null;
+            this._history = null;
+            this._redoHistory = null;
 
             super.dispose();
         }
 
         /**
          * Enable the Editor.
-         * @returns {Editor} The Editor.
          */
         enable() {
-            dom.removeAttribute(this._node, 'disabled');
+            $.removeAttribute(this._node, 'disabled');
             this._refreshDisabled();
             this._refreshToolbar();
-
-            return this;
-        }
-
-    }
-
-
-    /**
-     * EditorSet Class
-     * @class
-     */
-    class EditorSet {
-
-        /**
-         * Add an Editor to the set.
-         * @param {Editor} editor The editor to add.
-         */
-        static add(editor) {
-            this._editors.push(editor);
-
-            if (this._running) {
-                return;
-            }
-
-            this._dragCount = 0;
-
-            dom.addEvent(document.body, 'dragenter.ui.editor', _ => {
-                if (this._dragCount === 0) {
-                    for (const editor of this._editors) {
-                        editor._showDropTarget();
-                    }
-                }
-
-                this._dragCount++;
-            });
-
-            dom.addEvent(document.body, 'dragleave.ui.editor', _ => {
-                this._dragCount--;
-
-                if (this._dragCount === 0) {
-                    for (const editor of this._editors) {
-                        editor._resetDropText();
-                        dom.hide(editor._dropTarget);
-                    }
-                }
-            });
-
-            dom.addEvent(document.body, 'dragend.ui.editor drop.ui.editor', _ => {
-                this._dragCount = 0;
-            });
-
-            dom.addEvent(window, 'click.ui.editor', _ => {
-                for (const editor of this._editors) {
-                    editor._removePopover();
-                }
-            });
-
-            dom.addEvent(window, 'resize.ui.editor', DOM.debounce(_ => {
-                for (const editor of this._editors) {
-                    if (editor._currentNode && dom.is(editor._currentNode, 'img')) {
-                        editor._highlightImage(editor._currentNode);
-                    }
-                }
-            }));
-
-            this._running = true;
         }
 
         /**
-         * Remove a Editor from the set.
-         * @param {Editor} editor The editor to remove.
+         * Set the font family.
+         * @param {string} value The font family.
          */
-        static remove(editor) {
-            this._editors = this._editors.filter(oldEditor => oldEditor !== editor);
+        fontName(value) {
+            this._execCommand('fontName', value);
+        }
 
-            if (this._editors.length) {
+        /**
+         * Set the font size.
+         * @param {string} value The font size.
+         */
+        fontSize(value) {
+            value = Object.keys(this.constructor.fontSizes)
+                .find((key) => this.constructor.fontSizes[key] === value);
+
+            this._execCommand('fontSize', value);
+        }
+
+        /**
+         * Format the selected block level element.
+         * @param {string} value The tag name.
+         */
+        formatBlock(value) {
+            this._execCommand('formatBlock', value);
+        }
+
+        /**
+         * Set the foreground color.
+         * @param {string} value The foreground color.
+         */
+        foreColor(value) {
+            this._execCommand('foreColor', value);
+        }
+
+        /**
+         * Indent the selection.
+         */
+        indent() {
+            this._execCommand('indent');
+        }
+
+        /**
+         * Insert a horizontal rule.
+         */
+        insertHorizontalRule() {
+            this._execCommand('insertHorizontalRule');
+        }
+
+        /**
+         * Insert a HTML string.
+         * @param {string} value The HTML string.
+         */
+        insertHTML(value) {
+            this._execCommand('insertHTML', value);
+        }
+
+        /**
+         * Insert an image.
+         * @param {string} src The image src.
+         */
+        insertImage(src) {
+            const img = $.create('img', {
+                attributes: { src },
+            });
+
+            const newImg = this._insertNode(img);
+
+            const image = new Image;
+            image.onload = (_) => {
+                const maxWidth = $.width(this._editor, { boxSize: $.CONTENT_BOX });
+                const width = Math.min(image.width, maxWidth);
+                $.setStyle(newImg, 'width', `${width}px`);
+            };
+
+            image.src = src;
+        }
+
+        /**
+         * Insert a link.
+         * @param {string} href The link href.
+         * @param {string} text The link text.
+         * @param {Boolean} [newWindow] Whether to open the link in a new window.
+         */
+        insertLink(href, text, newWindow) {
+            const link = $.create('a', {
+                text,
+                attributes: {
+                    href,
+                },
+            });
+
+            if (newWindow) {
+                $.setAttribute(link, { target: '_blank' });
+            }
+
+            this._insertNode(link);
+        }
+
+        /**
+         * Insert a text string.
+         * @param {string} value The text.
+         */
+        insertText(value) {
+            this._execCommand('insertText', value);
+        }
+
+        /**
+         * Create an ordered list for the selection.
+         */
+        insertOrderedList() {
+            this._execCommand('insertOrderedList');
+        }
+
+        /**
+         * Create an unordered list for the selection.
+         */
+        insertUnorderedList() {
+            this._execCommand('insertUnorderedList');
+        }
+
+        /**
+         * Toggle italic state.
+         */
+        italic() {
+            this._execCommand('italic');
+        }
+
+        /**
+         * Center the selection.
+         */
+        justifyCenter() {
+            this._execCommand('justifyCenter');
+        }
+
+        /**
+         * Justify the selection.
+         */
+        justifyFull() {
+            this._execCommand('justifyFull');
+        }
+
+        /**
+         * Align the selection to the left.
+         */
+        justifyLeft() {
+            this._execCommand('justifyLeft');
+        }
+
+        /**
+         * Align the selection to the right.
+         */
+        justifyRight() {
+            this._execCommand('justifyRight');
+        }
+
+        /**
+         * Outdent the selection.
+         */
+        outdent() {
+            this._execCommand('outdent');
+        }
+
+        /**
+         * Perform a redo.
+         */
+        redo() {
+            if (!this._redoHistory.length) {
                 return;
             }
 
-            dom.removeEvent(document.body, 'dragenter.ui.editor');
-            dom.removeEvent(document.body, 'dragleave.ui.editor');
-            dom.removeEvent(document.body, 'dragend.ui.editor');
-            dom.removeEvent(window, 'click.ui.editor');
-            dom.removeEvent(window, 'resize.ui.editor');
+            const current = this._redoHistory.pop();
 
-            this._running = false;
+            this._addHistory(current);
+            this._restoreHistory(current);
         }
 
+        /**
+         * Remove all formatting from the selection.
+         */
+        removeFormat() {
+            this._execCommand('removeFormat');
+        }
+
+        /**
+         * Toggle strikethrough state.
+         */
+        strikethrough() {
+            this._execCommand('strikethrough');
+        }
+
+        /**
+         * Toggle subscript state.
+         */
+        subscript() {
+            this._execCommand('subscript');
+        }
+
+        /**
+         * Toggle superscript state.
+         */
+        superscript() {
+            this._execCommand('superscript');
+        }
+
+        /**
+         * Toggle underline state.
+         */
+        underline() {
+            this._execCommand('underline');
+        }
+
+        /**
+         * Perform an undo.
+         */
+        undo() {
+            if (this._history.length <= 1) {
+                return;
+            }
+
+            const next = this._history.pop();
+            this._redoHistory.push(next);
+
+            const current = this._history.at(-1);
+
+            this._restoreHistory(current);
+        }
+
+        /**
+         * Remove the selected anchor element.
+         */
+        unlink() {
+            this._execCommand('unlink');
+        }
     }
 
-
-    /**
-     * Editor Icons
-     */
-
-    Editor.icons = {
+    var icons = {
         alignCenter: '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" focusable="false" width="1em" height="1em" preserveAspectRatio="xMidYMid meet" viewBox="0 0 24 24"><path d="M3 3h18v2H3V3m4 4h10v2H7V7m-4 4h18v2H3v-2m4 4h10v2H7v-2m-4 4h18v2H3v-2z" fill="currentColor"/></svg>',
         alignJustify: '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" focusable="false" width="1em" height="1em" preserveAspectRatio="xMidYMid meet" viewBox="0 0 24 24"><path d="M3 3h18v2H3V3m0 4h18v2H3V7m0 4h18v2H3v-2m0 4h18v2H3v-2m0 4h18v2H3v-2z" fill="currentColor"/></svg>',
         alignLeft: '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" focusable="false" width="1em" height="1em" preserveAspectRatio="xMidYMid meet" viewBox="0 0 24 24"><path d="M3 3h18v2H3V3m0 4h12v2H3V7m0 4h18v2H3v-2m0 4h12v2H3v-2m0 4h18v2H3v-2z" fill="currentColor"/></svg>',
@@ -296,59 +666,56 @@
         undo: '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" focusable="false" width="1em" height="1em" preserveAspectRatio="xMidYMid meet" viewBox="0 0 24 24"><path d="M12.5 8c-2.65 0-5.05 1-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88c3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z" fill="currentColor"/></svg>',
         unlink: '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" focusable="false" width="1em" height="1em" preserveAspectRatio="xMidYMid meet" viewBox="0 0 24 24"><path d="M17 7h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1c0 1.43-.98 2.63-2.31 3l1.46 1.44C20.88 15.61 22 13.95 22 12a5 5 0 0 0-5-5m-1 4h-2.19l2 2H16v-2M2 4.27l3.11 3.11A4.991 4.991 0 0 0 2 12a5 5 0 0 0 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1c0-1.59 1.21-2.9 2.76-3.07L8.73 11H8v2h2.73L13 15.27V17h1.73l4.01 4L20 19.74L3.27 3L2 4.27z" fill="currentColor"/></svg>',
         unorderedList: '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" focusable="false" width="1em" height="1em" preserveAspectRatio="xMidYMid meet" viewBox="0 0 24 24"><path d="M7 5h14v2H7V5m0 8v-2h14v2H7M4 4.5A1.5 1.5 0 0 1 5.5 6A1.5 1.5 0 0 1 4 7.5A1.5 1.5 0 0 1 2.5 6A1.5 1.5 0 0 1 4 4.5m0 6A1.5 1.5 0 0 1 5.5 12A1.5 1.5 0 0 1 4 13.5A1.5 1.5 0 0 1 2.5 12A1.5 1.5 0 0 1 4 10.5M7 19v-2h14v2H7m-3-2.5A1.5 1.5 0 0 1 5.5 18A1.5 1.5 0 0 1 4 19.5A1.5 1.5 0 0 1 2.5 18A1.5 1.5 0 0 1 4 16.5z" fill="currentColor"/></svg>',
-        video: '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" focusable="false" width="1em" height="1em" preserveAspectRatio="xMidYMid meet" viewBox="0 0 24 24"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z" fill="currentColor"/></svg>'
+        video: '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" focusable="false" width="1em" height="1em" preserveAspectRatio="xMidYMid meet" viewBox="0 0 24 24"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z" fill="currentColor"/></svg>',
     };
 
-
-    /**
-     * Editor Plugins
-     */
-
-    Editor.plugins = {
+    var plugins = {
         alignCenter: {
-            command: 'justifyCenter'
+            command: 'justifyCenter',
         },
         alignJustify: {
-            command: 'justifyFull'
+            command: 'justifyFull',
         },
         alignLeft: {
-            command: 'justifyLeft'
+            command: 'justifyLeft',
         },
         alignRight: {
-            command: 'justifyRight'
+            command: 'justifyRight',
         },
         bold: {
-            command: 'bold'
+            command: 'bold',
         },
         color: {
             setContent() {
                 const backColor = document.queryCommandValue('backColor');
                 const foreColor = document.queryCommandValue('foreColor');
 
-                const span = dom.create('strong', {
+                const span = $.create('span', {
                     text: 'A',
-                    class: 'd-inline-block px-1 pe-none',
+                    class: this.constructor.classes.colorBtnContent,
                     style: {
                         color: foreColor,
-                        backgroundColor: backColor
-                    }
+                        backgroundColor: backColor,
+                    },
                 });
 
-                return dom.getProperty(span, 'outerHTML');
+                return $.getProperty(span, 'outerHTML');
             },
             dropdown(dropdown) {
                 this._colorDropdown(dropdown);
-            }
+            },
         },
         font: {
             setContent() {
                 const fontName = document.queryCommandValue('fontName').replace(/"/g, '');
 
-                return this._settings.fonts.includes(fontName) ? fontName : this._settings.defaultFont;
+                return this._options.fonts.includes(fontName) ?
+                    fontName :
+                    this._options.defaultFont;
             },
             dropdown(dropdown) {
                 this._fontDropdown(dropdown);
-            }
+            },
         },
         fontSize: {
             setContent() {
@@ -358,13 +725,13 @@
                     return this.constructor.fontSizes[size];
                 }
 
-                const fontSizePx = dom.css(this._editor, 'fontSize');
+                const fontSizePx = $.css(this._editor, 'fontSize');
                 const fontSize = parseFloat(fontSizePx);
                 return Math.round(fontSize);
             },
             dropdown(dropdown) {
                 this._fontSizeDropdown(dropdown);
-            }
+            },
         },
         fullScreen: {
             action() {
@@ -376,2692 +743,309 @@
                 this._fullScreen = this.constructor._createModal({
                     content: this._container,
                     fullScreen: true,
-                    onShown: _ => {
-                        if (dom.isVisible(this._sourceContainer)) {
-                            dom.focus(this._source);
+                    onShown: (_) => {
+                        if ($.isVisible(this._sourceContainer)) {
+                            $.focus(this._source);
                         } else {
-                            dom.focus(this._editor);
+                            $.focus(this._editor);
                         }
                     },
-                    onHide: _ => {
-                        dom.insertBefore(this._container, this._node);
+                    onHide: (_) => {
+                        $.insertBefore(this._container, this._node);
                         this._fullScreen = null;
-                    }
+                    },
                 });
-            }
+            },
         },
         hr: {
-            command: 'insertHorizontalRule'
+            command: 'insertHorizontalRule',
         },
         image: {
             action() {
                 this._showImageModal();
-            }
+            },
         },
         indent: {
-            command: 'indent'
+            command: 'indent',
         },
         italic: {
-            command: 'italic'
+            command: 'italic',
         },
         link: {
             action() {
                 this._showLinkModal();
-            }
+            },
         },
         orderedList: {
-            command: 'insertOrderedList'
+            command: 'insertOrderedList',
+            disableCheck: () => !['', 'p']
+                .includes(document.queryCommandValue('formatBlock')),
         },
         outdent: {
-            command: 'outdent'
+            command: 'outdent',
         },
         paragraph: {
             dropdown: [
                 ['alignLeft', 'alignCenter', 'alignRight', 'alignJustify'],
-                ['indent', 'outdent']
-            ]
+                ['indent', 'outdent'],
+            ],
         },
         redo: {
             command: 'redo',
-            disableCheck: _ => !document.queryCommandEnabled('redo')
+            disableCheck() {
+                return !this._redoHistory.length;
+            },
         },
         removeFormat: {
-            command: 'removeFormat'
+            command: 'removeFormat',
         },
         source: {
             action() {
-                if (dom.isVisible(this._sourceContainer)) {
+                if ($.isVisible(this._sourceContainer)) {
                     this._showEditor();
-                    dom.focus(this._editor);
+                    $.focus(this._editor);
                 } else {
                     this._showSource();
-                    dom.focus(this._source);
+                    $.focus(this._source);
                 }
 
                 this._refreshToolbar();
-            }
+            },
         },
         strikethrough: {
-            command: 'strikeThrough'
+            command: 'strikeThrough',
         },
         style: {
             dropdown(dropdown) {
                 this._styleDropdown(dropdown);
-            }
+            },
+            disableCheck: (_) =>
+                document.queryCommandState('insertOrderedList') ||
+                document.queryCommandState('insertUnorderedList'),
         },
         subscript: {
-            command: 'subscript'
+            command: 'subscript',
         },
         superscript: {
-            command: 'superscript'
+            command: 'superscript',
         },
         table: {
             dropdown(dropdown) {
                 this._tableDropdown(dropdown);
-            }
+            },
         },
         underline: {
-            command: 'underline'
+            command: 'underline',
         },
         undo: {
             command: 'undo',
-            disableCheck: _ => !document.queryCommandEnabled('undo')
+            disableCheck() {
+                return !this._history.length;
+            },
         },
         unlink: {
-            command: 'unlink'
+            command: 'unlink',
         },
         unorderedList: {
-            command: 'insertUnorderedList'
+            command: 'insertUnorderedList',
+            disableCheck: () => !['', 'p']
+                .includes(document.queryCommandValue('formatBlock')),
         },
         video: {
             action() {
                 this._showVideoModal();
-            }
-        }
+            },
+        },
     };
 
-
-    /**
-     * Editor Popovers
-     */
-
-    Editor.popovers = {
+    var popovers = {
         floatLeft: {
             action(node) {
-                this._setStyle(node, 'float', 'left');
-            }
+                $.setStyle(node, { float: 'left' });
+            },
         },
         floatRight: {
             action(node) {
-                this._setStyle(node, 'float', 'right');
-            }
+                $.setStyle(node, { float: 'right' });
+            },
         },
         floatNone: {
             action(node) {
-                this._setStyle(node, 'float', '');
-            }
+                $.removeStyle(node, 'float');
+            },
         },
         imageFull: {
             content: '100%',
             action(node) {
-                this._setStyle(node, 'width', '100%');
-            }
-        },
-        imageFull: {
-            content: '100%',
-            action(node) {
-                this._setStyle(node, 'width', '100%');
-            }
+                $.setStyle(node, { width: '100%' });
+            },
         },
         imageHalf: {
             content: '50%',
             action(node) {
-                this._setStyle(node, 'width', '50%');
-            }
+                $.setStyle(node, { width: '50%' });
+            },
         },
         imageQuarter: {
             content: '25%',
             action(node) {
-                this._setStyle(node, 'width', '25%');
-            }
+                $.setStyle(node, { width: '25%' });
+            },
         },
         imageOriginal: {
             action(node) {
-                this._setStyle(node, 'width', '');
-            }
+                $.removeStyle(node, 'width');
+            },
         },
         imageRemove: {
             action(node) {
-                this._removeNode(node);
+                $.detach(node);
+
                 this._removePopover();
-            }
+            },
         },
         link: {
             render(node) {
-                const href = dom.getAttribute(node, 'href');
-                return dom.create('a', {
+                const href = $.getAttribute(node, 'href');
+                return $.create('a', {
                     text: href,
-                    class: 'me-1',
+                    class: this.constructor.classes.linkUrl,
                     attributes: {
                         href,
-                        target: '_blank'
-                    }
+                        target: '_blank',
+                    },
                 });
-            }
+            },
         },
         linkEdit: {
             action(node) {
                 this._showLinkModal(node);
-            }
+            },
         },
         tableColumnAfter: {
             action(node) {
                 this._updateTable(node, (td, _, table) => {
-                    const index = dom.index(td);
-                    const rows = dom.find(':scope > thead > tr, :scope > tbody > tr', table);
+                    const index = $.index(td);
+                    const rows = $.find(':scope > thead > tr, :scope > tbody > tr', table);
+
+                    this._observe(false);
+
                     for (const row of rows) {
-                        const newTd = dom.create('td');
-                        const cells = dom.children(row, 'th, td');
-                        dom.after(cells[index], newTd);
+                        const newTd = $.create('td', {
+                            html: '<br>',
+                        });
+                        const cells = $.children(row, 'th, td');
+                        $.after(cells[index], newTd);
                     }
+
+                    this._observe();
+                    this._updateValue();
                 });
-            }
+            },
         },
         tableColumnBefore: {
             action(node) {
                 this._updateTable(node, (td, _, table) => {
-                    const index = dom.index(td);
-                    const rows = dom.find(':scope > thead > tr, :scope > tbody > tr', table);
+                    const index = $.index(td);
+                    const rows = $.find(':scope > thead > tr, :scope > tbody > tr', table);
+
+                    this._observe(false);
+
                     for (const row of rows) {
-                        const newTd = dom.create('td');
-                        const cells = dom.children(row, 'th, td');
-                        dom.before(cells[index], newTd);
+                        const newTd = $.create('td', {
+                            html: '<br>',
+                        });
+                        const cells = $.children(row, 'th, td');
+                        $.before(cells[index], newTd);
                     }
+
+                    this._observe();
+                    this._updateValue();
                 });
-            }
+            },
         },
         tableColumnRemove: {
             action(node) {
                 this._updateTable(node, (td, _, table) => {
-                    const index = dom.index(td);
-                    const rows = dom.find(':scope > thead > tr, :scope > tbody > tr', table);
+                    const index = $.index(td);
+                    const rows = $.find(':scope > thead > tr, :scope > tbody > tr', table);
+
+                    this._observe(false);
+
                     for (const row of rows) {
-                        const cells = dom.children(row, 'th, td');
-                        dom.remove(cells[index]);
+                        const cells = $.children(row, 'th, td');
+                        $.remove(cells[index]);
                     }
+
+                    this._observe();
+                    this._updateValue();
+                    this._removePopover();
                 });
-            }
+            },
         },
         tableRemove: {
             action(node) {
-                const table = dom.closest(node, 'table', this._editor).shift();
-                this._removeNode(table);
+                const table = $.closest(node, 'table', this._editor).shift();
+                $.detach(table);
+
                 this._removePopover();
-            }
+            },
         },
         tableRowAfter: {
             action(node) {
                 this._updateTable(node, (_, tr) => {
-                    const columns = dom.children(tr).length;
-                    const newTr = dom.create('tr');
+                    const columns = $.children(tr).length;
+                    const newTr = $.create('tr');
+
                     for (let i = 0; i < columns; i++) {
-                        const newTd = dom.create('td');
-                        dom.append(newTr, newTd);
+                        const newTd = $.create('td', {
+                            html: '<br>',
+                        });
+                        $.append(newTr, newTd);
                     }
-                    dom.after(tr, newTr);
+
+                    $.after(tr, newTr);
                 });
-            }
+            },
         },
         tableRowBefore: {
             action(node) {
                 this._updateTable(node, (_, tr) => {
-                    const columns = dom.children(tr).length;
-                    const newTr = dom.create('tr');
+                    const columns = $.children(tr).length;
+                    const newTr = $.create('tr');
+
                     for (let i = 0; i < columns; i++) {
-                        const newTd = dom.create('td');
-                        dom.append(newTr, newTd);
+                        const newTd = $.create('td', {
+                            html: '<br>',
+                        });
+                        $.append(newTr, newTd);
                     }
-                    dom.before(tr, newTr);
+
+                    $.before(tr, newTr);
                 });
-            }
+            },
         },
         tableRowRemove: {
             action(node) {
                 this._updateTable(node, (_, tr) => {
-                    dom.remove(tr);
+                    $.remove(tr);
+
+                    this._removePopover();
                 });
-            }
+            },
         },
         unlink: {
             action(node) {
-                dom.select(node);
+                $.select(node);
                 this.unlink();
 
-                const range = this.constructor._getRange();
+                const range = getRange();
                 range.collapse();
-            }
-        }
+            },
+        },
     };
 
-
-    /**
-     * Editor API
-     */
-
-    Object.assign(Editor.prototype, {
-
-        /**
-         * Set the background color.
-         * @param {string} value The background color.
-         * @returns {Editor} The Editor.
-         */
-        backColor(value) {
-            return this._execCommand('backColor', value);
-        },
-
-        /**
-         * Toggle bold state.
-         * @returns {Editor} The Editor.
-         */
-        bold() {
-            return this._execCommand('bold');
-        },
-
-        /**
-         * Set the font family.
-         * @param {string} value The font family.
-         * @returns {Editor} The Editor.
-         */
-        fontName(value) {
-            return this._execCommand('fontName', value);
-        },
-
-        /**
-         * Set the font size.
-         * @param {string} value The font size.
-         * @returns {Editor} The Editor.
-         */
-        fontSize(value) {
-            value = Object.keys(this.constructor.fontSizes)
-                .find(key => this.constructor.fontSizes[key] === value);
-
-            return this._execCommand('fontSize', value);
-        },
-
-        /**
-         * Format the selected block level element.
-         * @param {string} value The tag name.
-         * @returns {Editor} The Editor.
-         */
-        formatBlock(value) {
-            return this._execCommand('formatBlock', value);
-        },
-
-        /**
-         * Set the foreground color.
-         * @param {string} value The foreground color.
-         * @returns {Editor} The Editor.
-         */
-        foreColor(value) {
-            return this._execCommand('foreColor', value);
-        },
-
-        /**
-         * Indent the selection.
-         * @returns {Editor} The Editor.
-         */
-        indent() {
-            return this._execCommand('indent');
-        },
-
-        /**
-         * Insert a horizontal rule.
-         * @returns {Editor} The Editor.
-         */
-        insertHorizontalRule() {
-            return this._execCommand('insertHorizontalRule');
-        },
-
-        /**
-         * Insert a HTML string.
-         * @param {string} value The HTML string.
-         * @returns {Editor} The Editor.
-         */
-        insertHTML(value) {
-            return this._execCommand('insertHTML', value);
-        },
-
-        /**
-         * Insert an image.
-         * @param {string} src The image src.
-         * @returns {Editor} The Editor.
-         */
-        insertImage(src) {
-            const img = dom.create('img', {
-                attributes: { src }
-            });
-
-            const newImg = this._insertNode(img);
-
-            const image = new Image;
-            image.onload = _ => {
-                const maxWidth = dom.width(this._editor, DOM.CONTENT_BOX);
-                const width = Math.min(image.width, maxWidth);
-                dom.setStyle(newImg, 'width', `${width}px`);
-            };
-
-            image.src = src;
-
-            return this;
-        },
-
-        /**
-         * Insert a link.
-         * @param {string} href The link href.
-         * @param {string} text The link text.
-         * @param {Boolean} [newWindow] Whether to open the link in a new window.
-         * @returns {Editor} The Editor.
-         */
-        insertLink(href, text, newWindow) {
-            const link = dom.create('a', {
-                text,
-                attributes: {
-                    href
-                }
-            });
-
-            if (newWindow) {
-                dom.setAttribute(link, 'target', '_blank');
-            }
-
-            this._insertNode(link);
-
-            return this;
-        },
-
-        /**
-         * Insert a text string.
-         * @param {string} value The text.
-         * @returns {Editor} The Editor.
-         */
-        insertText(value) {
-            return this._execCommand('insertText', value);
-        },
-
-        /**
-         * Create an ordered list for the selection.
-         * @returns {Editor} The Editor.
-         */
-        insertOrderedList() {
-            return this._execCommand('insertOrderedList');
-        },
-
-        /**
-         * Create an unordered list for the selection.
-         * @returns {Editor} The Editor.
-         */
-        insertUnorderedList() {
-            return this._execCommand('insertUnorderedList');
-        },
-
-        /**
-         * Toggle italic state.
-         * @returns {Editor} The Editor.
-         */
-        italic() {
-            return this._execCommand('italic');
-        },
-
-        /**
-         * Center the selection.
-         * @returns {Editor} The Editor.
-         */
-        justifyCenter() {
-            return this._execCommand('justifyCenter');
-        },
-
-        /**
-         * Justify the selection.
-         * @returns {Editor} The Editor.
-         */
-        justifyFull() {
-            return this._execCommand('justifyFull');
-        },
-
-        /**
-         * Align the selection to the left.
-         * @returns {Editor} The Editor.
-         */
-        justifyLeft() {
-            return this._execCommand('justifyLeft');
-        },
-
-        /**
-         * Align the selection to the right.
-         * @returns {Editor} The Editor.
-         */
-        justifyRight() {
-            return this._execCommand('justifyRight');
-        },
-
-        /**
-         * Outdent the selection.
-         * @returns {Editor} The Editor.
-         */
-        outdent() {
-            return this._execCommand('outdent');
-        },
-
-        /**
-         * Perform a redo.
-         * @returns {Editor} The Editor.
-         */
-        redo() {
-            return this._execCommand('redo');
-        },
-
-        /**
-         * Remove all formatting from the selection.
-         * @returns {Editor} The Editor.
-         */
-        removeFormat() {
-            return this._execCommand('removeFormat');
-        },
-
-        /**
-         * Toggle strikethrough state.
-         * @returns {Editor} The Editor.
-         */
-        strikethrough() {
-            return this._execCommand('strikethrough');
-        },
-
-        /**
-         * Toggle subscript state.
-         * @returns {Editor} The Editor.
-         */
-        subscript() {
-            return this._execCommand('subscript');
-        },
-
-        /**
-         * Toggle superscript state.
-         * @returns {Editor} The Editor.
-         */
-        superscript() {
-            return this._execCommand('superscript');
-        },
-
-        /**
-         * Toggle underline state.
-         * @returns {Editor} The Editor.
-         */
-        underline() {
-            return this._execCommand('underline');
-        },
-
-        /**
-         * Perform an undo.
-         * @returns {Editor} The Editor.
-         */
-        undo() {
-            this._execCommand('undo');
-
-            // fix for preserve previous range
-            if (document.queryCommandEnabled('undo')) {
-                this._execCommand('undo');
-                this._execCommand('redo');
-            } else {
-                const range = this.constructor._getRange();
-
-                if (range && !range.collapsed) {
-                    range.collapse();
-                }
-            }
-
-            return this;
-        },
-
-        /**
-         * Remove the selected anchor element.
-         * @returns {Editor} The Editor.
-         */
-        unlink() {
-            return this._execCommand('unlink');
-        }
-
-    });
-
-
-    /**
-     * Editor Events
-     */
-
-    Object.assign(Editor.prototype, {
-
-        /**
-         * Attach events for the Editor.
-         */
-        _events() {
-            this._eventsToolbar();
-            this._eventsEditor();
-            this._eventsPopover();
-            this._eventsSource();
-            this._eventsDrop();
-
-            if (this._settings.resizable) {
-                this._eventsResize();
-            }
-        },
-
-        /**
-         * Attach drop events.
-         */
-        _eventsDrop() {
-            dom.addEventDelegate(this._editor, 'dragstart.ui.editor', 'img', e => {
-                e.preventDefault();
-            });
-
-            dom.addEvent(this._dropTarget, 'dragenter.ui.editor', _ => {
-                dom.addClass(this._dropText, this.constructor.classes.dropHover);
-                dom.setText(this._dropText, this.constructor.lang.drop.drop);
-                dom.show(this._dropTarget);
-            });
-
-            dom.addEvent(this._dropTarget, 'dragleave.ui.editor', _ => {
-                this._resetDropText();
-            });
-
-            dom.addEvent(this._dropTarget, 'dragover.ui.editor', e => {
-                e.preventDefault();
-            });
-
-            dom.addEvent(this._dropTarget, 'drop.ui.editor', e => {
-                e.preventDefault();
-
-                // reset drag count
-                EditorSet._dragCount = 0;
-
-                this._resetDropText();
-                dom.hide(this._dropTarget);
-
-                if (!e.dataTransfer.files.length) {
-                    const text = e.dataTransfer.getData('text');
-                    this.insertText(text);
-                    return;
-                }
-
-                const file = e.dataTransfer.files[0];
-
-                if (file.type.substring(0, 5) !== 'image') {
-                    return;
-                }
-
-                const reader = new FileReader();
-                reader.readAsDataURL(file);
-                reader.onload = _ => {
-                    this.insertImage(reader.result);
-                };
-            });
-        },
-
-        /**
-         * Attach editor events.
-         */
-        _eventsEditor() {
-            dom.addEvent(this._editor, 'focus.ui.editor', e => {
-                if (this._noFocus) {
-                    this._noFocus = false;
-                    return;
-                }
-
-                const range = this.constructor._getRange();
-
-                if (range && !range.collapsed && !e.relatedTarget) {
-                    range.collapse();
-                }
-
-                setTimeout(_ => {
-                    const selection = window.getSelection();
-
-                    if (!dom.hasDescendent(this._editor, selection.anchorNode)) {
-                        return;
-                    }
-
-                    this._refreshCursor();
-                    this._refreshToolbar();
-                }, 0);
-
-                dom.triggerEvent(this._node, 'focus.ui.editor');
-            });
-
-            dom.addEvent(this._editor, 'blur.ui.editor', _ => {
-                if (this._noBlur) {
-                    this._noBlur = false;
-                    return;
-                }
-
-                dom.triggerEvent(this._node, 'blur.ui.editor');
-            });
-
-            dom.addEvent(this._editor, 'input.ui.editor change.ui.editor', _ => {
-                const html = dom.getHTML(this._editor);
-
-                if (html === dom.getValue(this._node)) {
-                    return;
-                }
-
-                dom.setValue(this._node, html);
-                dom.setValue(this._source, html);
-
-                this._checkEmpty();
-
-                dom.triggerEvent(this._node, 'change.ui.editor');
-            });
-
-            if (this._settings.keyDown) {
-                dom.addEvent(this._editor, 'keydown.ui.editor', e => {
-                    this._settings.keyDown.bind(this)(e);
-
-                    const event = new KeyboardEvent('', e);
-                    this._node.dispatchEvent(event);
-                });
-            }
-
-            dom.addEvent(this._editor, 'keyup.ui.editor', e => {
-                this._refreshCursor();
-                this._refreshToolbar();
-
-                const event = new KeyboardEvent('', e);
-                this._node.dispatchEvent(event);
-            });
-
-            dom.addEventDelegate(this._editor, 'click.ui.editor', 'a, td, img', e => {
-                e.preventDefault();
-                e.stopPropagation();
-
-                setTimeout(_ => {
-                    this._refreshToolbar();
-                }, 0);
-
-                if (dom.is(e.currentTarget, 'img')) {
-                    window.getSelection().collapseToEnd();
-                }
-
-                this._refreshPopover(e.currentTarget, e);
-            }, true);
-
-            this._observer = new MutationObserver(_ => {
-                if (this._noMutate) {
-                    this._noMutate = false;
-                    return;
-                }
-
-                dom.triggerEvent(this._editor, 'change.ui.editor');
-
-                this._cleanupStyles();
-            });
-
-            this._observer.observe(this._editor, { attributes: true, childList: true, subtree: true });
-        },
-
-        /**
-         * Attach popover events.
-         */
-        _eventsPopover() {
-            dom.addEventDelegate(this._popover, 'click.ui.editor', '[data-ui-action]', e => {
-                const action = dom.getDataset(e.currentTarget, 'uiAction');
-
-                if (!(action in this.constructor.popovers)) {
-                    throw new Error(`Unknown action ${action}`);
-                }
-
-                e.preventDefault();
-
-                this.constructor.popovers[action].action.bind(this)(this._currentNode);
-                this._refreshPopover(this._currentNode);
-            });
-
-            let originalWidth;
-            dom.addEvent(this._imgResize, 'mousedown.ui.editor', dom.mouseDragFactory(
-                e => {
-                    if (!this._currentNode || !dom.is(this._currentNode, 'img')) {
-                        return false;
-                    }
-
-                    e.preventDefault();
-                    e.stopPropagation();
-
-                    originalWidth = dom.getStyle(this._currentNode, 'width');
-
-                    dom.hide(this._imgCursor);
-                    dom.hide(this._popover);
-                },
-                e => {
-                    const imgRect = dom.rect(this._currentNode, true);
-                    const ratio = imgRect.width / imgRect.height;
-                    const width = Math.max(
-                        e.pageX - imgRect.x,
-                        (e.pageY - imgRect.y) * ratio,
-                        1
-                    );
-                    dom.setStyle(this._currentNode, 'width', `${Math.round(width)}px`);
-                    this._highlightImage(this._currentNode);
-                },
-                _ => {
-                    const width = dom.getStyle(this._currentNode, 'width');
-
-                    if (width !== originalWidth) {
-                        dom.setStyle(this._currentNode, 'width', originalWidth);
-                        this._setStyle(this._currentNode, 'width', width);
-                    }
-
-                    originalWidth = null;
-                }
-            ));
-
-            dom.addEvent(this._editorBody, 'scroll.ui.editor', _ => {
-                this._removePopover();
-            });
-        },
-
-        /**
-         * Attach resize events.
-         */
-        _eventsResize() {
-            let resizeOffset = 0;
-            dom.addEvent(this._resizeBar, 'mousedown.ui.editor', dom.mouseDragFactory(
-                e => {
-                    e.preventDefault();
-
-                    const barPosition = dom.position(this._resizeBar, true);
-                    resizeOffset = e.pageY - barPosition.y;
-
-                    this._removePopover();
-                },
-                e => {
-                    const editorPosition = dom.position(this._editorBody, true);
-
-                    const height = Math.max(0, e.pageY - editorPosition.y - resizeOffset);
-                    dom.setStyle(this._editorBody, 'height', `${height}px`);
-                },
-                _ => {
-                    resizeOffset = 0;
-                }
-            ));
-        },
-
-        /**
-         * Attach source events.
-         */
-        _eventsSource() {
-            dom.addEvent(this._source, 'input.ui.editor', _ => {
-                this._refreshLineNumbers();
-            });
-
-            dom.addEvent(this._source, 'change.ui.editor', _ => {
-                this._noMutate = true;
-
-                const html = dom.getValue(this._source);
-
-                // fix for undo/redo
-                this._showEditor();
-                this._focusEditor();
-                const range = dom.createRange();
-                range.selectNodeContents(this._editor);
-                this.constructor._selectRange(range);
-                this.insertHTML(html);
-                range.collapse();
-
-                dom.setValue(this._node, html);
-
-                this._refreshLineNumbers();
-                this._showSource();
-
-                dom.triggerEvent(this._node, 'change.ui.editor');
-            });
-
-            if (this._settings.keyDownSource) {
-                dom.addEvent(this._source, 'keydown.ui.editor', e => {
-                    this._settings.keyDownSource.bind(this)(e);
-                });
-            }
-
-            dom.addEvent(this._source, 'scroll.ui.editor', DOM.debounce(_ => {
-                const scrollY = dom.getScrollY(this._source);
-                dom.setStyle(this._lineNumbers, 'marginTop', `${-scrollY}px`);
-            }));
-        },
-
-        /**
-         * Attach toolbar events.
-         */
-        _eventsToolbar() {
-            dom.addEventDelegate(this._toolbar, 'click.ui.editor', '[data-ui-action]', e => {
-                const action = dom.getDataset(e.currentTarget, 'uiAction');
-
-                if (!(action in this.constructor.plugins)) {
-                    throw new Error(`Unknown action ${action}`);
-                }
-
-                e.preventDefault();
-
-                this.constructor.plugins[action].action.bind(this)();
-            });
-
-            dom.addEventDelegate(this._toolbar, 'click.ui.editor', '[data-ui-command]', e => {
-                const command = dom.getDataset(e.currentTarget, 'uiCommand');
-
-                if (!(command in this)) {
-                    throw new Error(`Unknown command ${command}`);
-                }
-
-                e.preventDefault();
-
-                const value = dom.getDataset(e.currentTarget, 'uiValue');
-                this[command](value);
-
-                this._refreshToolbar();
-            });
-        }
-
-    });
-
-
-    /**
-     * Editor Helpers
-     */
-
-    Object.assign(Editor.prototype, {
-
-        /**
-         * Check if the editor is empty and populate base markup.
-         */
-        _checkEmpty() {
-            const html = dom.getValue(this._node).trim();
-
-            if (html || html === '<br>') {
-                return;
-            }
-
-            this._noMutate = true;
-
-            dom.setHTML(this._editor, this.constructor._baseMarkup);
-            dom.setValue(this._node, this.constructor._baseMarkup);
-            dom.setValue(this._source, this.constructor._baseMarkup);
-        },
-
-        /**
-         * Cleanup editor element styles.
-         */
-        _cleanupStyles() {
-            const nodes = dom.find('[style=""]', this._editor);
-
-            if (!nodes.length) {
-                return;
-            }
-
-            for (const node of nodes) {
-                this._noMutate = true;
-                dom.removeAttribute(node, 'style');
-            }
-
-            const html = dom.getHTML(this._editor);
-            dom.setValue(this._node, html);
-            dom.setValue(this._source, html);
-        },
-
-        /**
-         * Execute a command.
-         * @param {string} command The command.
-         * @param {Boolean|string} [value] The command argument.
-         * @returns {Editor} The Editor.
-         */
-        _execCommand(command, value) {
-            if (dom.is(this._node, ':disabled')) {
-                return this;
-            }
-
-            this._focusEditor();
-
-            document.execCommand('styleWithCSS', false, this.constructor._cssCommands.includes(command));
-            document.execCommand(command, false, value);
-
-            return this;
-        },
-
-        /**
-         * Ensure the editor element has focus.
-         */
-        _focusEditor() {
-            if (dom.hasDescendent(this._editor, document.activeElement)) {
-                return;
-            }
-
-            const selection = window.getSelection();
-
-            if (dom.hasDescendent(this._editor, selection.anchorNode)) {
-                return;
-            }
-
-            this._noFocus = true;
-            dom.focus(this._editor);
-            this._noFocus = false;
-        },
-
-        /**
-         * Refresh the popover at cursor.
-         */
-        _refreshCursor() {
-            const selection = window.getSelection();
-            const baseNode = selection.baseNode;
-
-            if (!dom.hasDescendent(this._editor, baseNode)) {
-                return this._removePopover();
-            }
-
-            const currentNode = dom.is(baseNode, 'a') ?
-                baseNode :
-                dom.closest(baseNode, 'a', this._editor).shift();
-
-            if (!currentNode) {
-                return this._removePopover();
-            }
-
-            this._refreshPopover(currentNode);
-        },
-
-        /**
-         * Refresh the editor disabled.
-         */
-        _refreshDisabled() {
-            if (dom.is(this._node, ':disabled')) {
-                dom.addClass(this._editor, this.constructor.classes.editorDisabled);
-                dom.setStyle(this._editor, 'opacity', .5);
-                dom.removeAttribute(this._editor, 'contenteditable');
-                dom.setAttribute(this._source, 'disabled', true);
-            } else {
-                dom.removeClass(this._editor, this.constructor.classes.editorDisabled);
-                dom.setStyle(this._editor, 'opacity', '');
-                dom.setAttribute(this._editor, 'contenteditable', true);
-                dom.removeAttribute(this._source, 'disabled');
-            }
-        },
-
-        /**
-         * Refresh the source line numbers.
-         */
-        _refreshLineNumbers() {
-            const html = dom.getValue(this._source);
-            const lineCount = html.split("\n").length;
-            const lines = dom.children(this._lineNumbers);
-
-            if (lineCount === lines.length) {
-                return;
-            }
-
-            if (lineCount <= lines.length) {
-                const removeLines = lines.slice(lineCount);
-                dom.remove(removeLines);
-                return;
-            }
-
-            for (let i = lines.length + 1; i <= lineCount; i++) {
-                const div = dom.create('div', {
-                    text: i
-                });
-                dom.append(this._lineNumbers, div);
-            }
-        },
-
-        /**
-         * Refresh the toolbar.
-         */
-        _refreshToolbar() {
-            this._focusEditor();
-            const isDisabled = dom.is(this._node, ':disabled');
-            const isSource = dom.isVisible(this._sourceContainer);
-
-            for (const { button, data, type } of this._buttons) {
-                if ('setContent' in data) {
-                    const content = data.setContent.bind(this)();
-                    dom.setHTML(button, content);
-                }
-
-                let on = false;
-                if ('command' in data) {
-                    on = 'value' in data ?
-                        document.queryCommandValue(data.command) === data.value :
-                        document.queryCommandState(data.command)
-                }
-
-                if (on) {
-                    dom.addClass(button, 'active');
-                } else {
-                    dom.removeClass(button, 'active');
-                }
-
-                if (
-                    isDisabled ||
-                    (isSource && !['source', 'fullScreen'].includes(type)) ||
-                    ('disableCheck' in data && data.disableCheck.bind(this)())
-                ) {
-                    dom.addClass(button, 'disabled');
-                } else {
-                    dom.removeClass(button, 'disabled');
-                }
-            }
-        },
-
-        /**
-         * Reset the drop text.
-         */
-        _resetDropText() {
-            dom.removeClass(this._dropText, this.constructor.classes.dropHover);
-            dom.setText(this._dropText, this.constructor.lang.drop.dropHere);
-        },
-
-        /**
-         * Show the drop target.
-         */
-        _showDropTarget() {
-            if (dom.is(this._node, ':disabled') || dom.isVisible(this._sourceContainer)) {
-                return;
-            }
-
-            dom.show(this._dropTarget);
-        },
-
-        /**
-         * Show the editor.
-         */
-        _showEditor() {
-            dom.show(this._editorScroll);
-            dom.hide(this._sourceOuter);
-        },
-
-        /**
-         * Show the source.
-         */
-        _showSource() {
-            dom.show(this._sourceOuter);
-            dom.setStyle(this._editorScroll, 'display', 'none', true);
-            dom.hide(this._imgHighlight);
-        }
-
-    });
-
-
-    /**
-     * Editor Modals
-     */
-
-    Object.assign(Editor.prototype, {
-
-        /**
-         * Remove the modal.
-         */
-        _removeModal() {
-            if (!this._modal) {
-                return;
-            }
-
-            UI.Modal.init(this._modal).dispose();
-            dom.remove(this._modal);
-            this._modal = null;
-        },
-
-        /**
-         * Show the image modal.
-         */
-        _showImageModal() {
-            const container = dom.create('div');
-
-            const { group: fileGroup, input: fileInput } = this.constructor._createFileInput({
-                id: `${this._id}-image-file`,
-                label: this.constructor.lang.modals.imageFile,
-                attributes: {
-                    accept: 'image/*',
-                    multiple: true
-                }
-            });
-
-            const { group: urlGroup, input: urlInput } = this.constructor._createInput({
-                id: `${this._id}-image-url`,
-                label: this.constructor.lang.modals.imageUrl
-            });
-
-            dom.append(container, fileGroup);
-            dom.append(container, urlGroup);
-
-            this._focusEditor();
-            const range = this.constructor._getRange();
-
-            this._modal = this.constructor._createModal({
-                title: this.constructor.lang.modals.insertImage,
-                content: container,
-                cancelText: this.constructor.lang.modals.cancel,
-                submitText: this.constructor.lang.modals.insertImage,
-                onSubmit: _ => {
-                    this.constructor._selectRange(range);
-
-                    const files = dom.getProperty(fileInput, 'files');
-
-                    if (!files.length) {
-                        const src = dom.getValue(urlInput);
-                        this.insertImage(src);
-                    }
-
-                    this._settings.imageUpload.bind(this)(files);
-                },
-                onShown: _ => {
-                    dom.focus(fileInput);
-                },
-                onHidden: _ => {
-                    this._removeModal();
-                }
-            });
-        },
-
-        /**
-         * Show the link modal.
-         * @param {HTMLElement} [link] The current link.
-         */
-        _showLinkModal(link) {
-            const container = dom.create('div');
-
-            const { group: textGroup, input: textInput } = this.constructor._createInput({
-                id: `${this._id}-link-text`,
-                label: this.constructor.lang.modals.linkText
-            });
-
-            const { group: urlGroup, input: urlInput } = this.constructor._createInput({
-                id: `${this._id}-link-url`,
-                label: this.constructor.lang.modals.linkUrl
-            });
-
-            const { group: newWindowGroup, input: newWindowInput } = this.constructor._createCheckbox({
-                id: `${this._id}-link-new-window`,
-                label: this.constructor.lang.modals.linkNewWindow
-            });
-
-            if (link) {
-                const text = dom.getText(link);
-                const href = dom.getAttribute(link, 'href');
-                const newWindow = dom.getAttribute(link, 'target');
-
-                dom.setValue(textInput, text);
-                dom.setValue(urlInput, href);
-
-                if (newWindow === '_blank') {
-                    dom.setProperty(newWindowInput, 'checked', true);
-                }
-            }
-
-            let hasText = false;
-
-            dom.addEvent(textInput, 'input.ui.editor', _ => {
-                hasText = !!dom.getValue(textInput);
-            });
-
-            dom.addEvent(urlInput, 'input.ui.editor', _ => {
-                if (hasText) {
-                    return;
-                }
-
-                const url = dom.getValue(urlInput);
-                dom.setValue(textInput, url);
-            });
-
-            dom.append(container, textGroup);
-            dom.append(container, urlGroup);
-            dom.append(container, newWindowGroup);
-
-            this._focusEditor();
-            const range = this.constructor._getRange();
-
-            this._modal = this.constructor._createModal({
-                title: this.constructor.lang.modals.insertLink,
-                content: container,
-                cancelText: this.constructor.lang.modals.cancel,
-                submitText: this.constructor.lang.modals.insertLink,
-                onSubmit: _ => {
-                    const text = dom.getValue(textInput);
-                    const href = dom.getValue(urlInput);
-                    const newWindow = dom.is(newWindowInput, ':checked');
-
-                    this.constructor._selectRange(range);
-                    this.insertLink(href, text, newWindow);
-                },
-                onShown: _ => {
-                    dom.focus(urlInput);
-                },
-                onHidden: _ => {
-                    this._removeModal();
-                }
-            });
-        },
-
-        /**
-         * Show the video modal.
-         */
-        _showVideoModal() {
-            const container = dom.create('div');
-
-            const { group: urlGroup, input: urlInput, invalidFeedback: urlInvalidFeedback } = this.constructor._createInput({
-                id: `${this._id}-video-url`,
-                label: this.constructor.lang.modals.videoUrl
-            });
-
-            dom.append(container, urlGroup);
-
-            this._focusEditor();
-            const range = this.constructor._getRange();
-
-            this._modal = this.constructor._createModal({
-                title: this.constructor.lang.modals.insertVideo,
-                content: container,
-                cancelText: this.constructor.lang.modals.cancel,
-                submitText: this.constructor.lang.modals.insertVideo,
-                onSubmit: _ => {
-                    const url = dom.getValue(urlInput);
-                    const match = url.match(/youtube\.com\/watch\?v=([\w]+)/i);
-
-                    if (!match) {
-                        dom.addClass(urlGroup, this.constructor.classes.formError);
-                        dom.setText(urlInvalidFeedback, this.constructor.lang.modals.videoUrlInvalid);
-                        return false;
-                    }
-
-                    dom.removeClass(urlGroup, this.constructor.classes.formError);
-
-                    const id = match[1];
-                    const video = dom.create('iframe', {
-                        attributes: {
-                            width: 560,
-                            height: 315,
-                            src: `https://www.youtube.com/embed/${id}`,
-                            frameborder: 0,
-                            allowfullscreen: true
-                        }
-                    });
-
-                    const html = dom.getProperty(video, 'outerHTML');
-                    this.constructor._selectRange(range);
-                    this.insertHTML(html);
-                },
-                onShown: _ => {
-                    dom.focus(urlInput);
-                },
-                onHidden: _ => {
-                    this._removeModal();
-                }
-            });
-        }
-
-    });
-
-
-    /**
-     * Editor Nodes
-     */
-
-    Object.assign(Editor.prototype, {
-
-        /**
-         * Insert a (cloned) node into the editor.
-         * @param {HTMLElement} node The node to insert.
-         * @returns The new node.
-         */
-        _insertNode(node) {
-            const id = this.constructor._generateId();
-
-            dom.setDataset(node, 'uiEditorNode', id);
-            const html = dom.getProperty(node, 'outerHTML');
-
-            this.insertHTML(html);
-
-            const newNode = dom.findOne(`[data-ui-editor-node="${id}"]`, this._editor);
-
-            dom.removeDataset(newNode, 'uiEditorNode');
-
-            return newNode;
-        },
-
-        /**
-         * Remove a node from the editor.
-         * @param {HTMLElement} node The node to remove.
-         */
-        _removeNode(node) {
-            if (!dom.hasDescendent(this._editor, node)) {
-                return;
-            }
-
-            this.constructor._selectNode(node);
-            document.execCommand('delete', false);
-        },
-
-        /**
-         * Replace a node in the editor.
-         * @param {HTMLElement} oldNode The node being replaced.
-         * @param {HTMLElement} node The replacement node.
-         * @returns The new node.
-         */
-        _replaceNode(oldNode, node) {
-            this._focusEditor();
-            const range = this.constructor._selectNode(oldNode);
-            const newNode = this._insertNode(node);
-            range.collapse();
-
-            return newNode;
-        },
-
-        /**
-         * Set a style attribute for an element.
-         * @param {HTMLElement} node The image element.
-         * @param {string} property The property to modify.
-         * @param {string} value The new property value.
-         */
-        _setStyle(node, property, value) {
-            const currentValue = dom.getStyle(node, property);
-
-            if (currentValue === value) {
-                return;
-            }
-
-            const newNode = dom.clone(node);
-            dom.setStyle(newNode, property, value);
-
-            this._removePopover();
-            this._replaceNode(node, newNode);
-        },
-
-        /**
-         * Update a table element.
-         * @param {HTMLElement} td The td element.
-         * @param {function} callback The callback.
-         */
-        _updateTable(td, callback) {
-            const id = this.constructor._generateId();
-
-            dom.setDataset(td, 'uiEditorNode', id);
-            const table = dom.closest(td, 'table', this._editor).shift();
-
-            const tempTable = dom.clone(table).shift();
-            const tempTd = dom.findOne(`[data-ui-editor-node="${id}"]`, tempTable);
-            const tempTr = dom.closest(tempTd, 'tr').shift();
-
-            callback(tempTd, tempTr, tempTable);
-
-            const newTable = this._replaceNode(table, tempTable);
-            const newNode = dom.findOne(`[data-ui-editor-node="${id}"]`, newTable);
-
-            dom.removeDataset(newNode, 'uiEditorNode');
-
-            this._removePopover();
-
-            const range = this.constructor._selectNode(newNode);
-            range.collapse(true);
-        }
-
-    });
-
-
-    /**
-     * Editor Popovers
-     */
-
-    Object.assign(Editor.prototype, {
-
-        /**
-         * Highlight an image.
-         * @param {HTMLElement} image The image element.
-         */
-        _highlightImage(image) {
-            dom.hide(this._imgHighlight);
-            dom.hide(this._imgCursor);
-
-            const imgRect = dom.rect(image, true);
-            const editorPos = dom.position(this._editor, true);
-            const scrollX = dom.getScrollX(this._editorBody);
-            const scrollY = dom.getScrollY(this._editorBody);
-            const imgX = Math.round(imgRect.x);
-            const imgY = Math.round(imgRect.y);
-            const imgWidth = Math.round(imgRect.width);
-            const imgHeight = Math.round(imgRect.height);
-
-            dom.setStyle(this._imgHighlight, {
-                top: `${imgY - editorPos.y + scrollY - 2}px`,
-                left: `${imgX - editorPos.x + scrollX - 2}px`,
-                width: `${imgWidth + 2}px`,
-                height: `${imgHeight + 2}px`
-            });
-
-            dom.setText(this._imgSizeInfo, `${imgWidth}x${imgHeight}`);
-
-            if (imgWidth < 100 || imgHeight < 50) {
-                dom.hide(this._imgSizeInfo);
-            } else {
-                dom.show(this._imgSizeInfo);
-            }
-
-            dom.show(this._imgHighlight);
-            dom.show(this._imgCursor);
-        },
-
-        /**
-         * Refresh the popover.
-         * @param {HTMLElement} currentNode The current selected node.
-         * @param {Event} [event] The current event.
-         */
-        _refreshPopover(currentNode, event) {
-            if (dom.isSame(currentNode, this._currentNode)) {
-                return;
-            }
-
-            this._removePopover();
-
-            this._currentNode = currentNode;
-
-            if (!this._currentNode) {
-                return;
-            }
-
-            const tagName = dom.tagName(this._currentNode);
-
-            let reference = this._currentNode;
-            if (event && tagName === 'img') {
-                const editorPos = dom.position(this._editor, true);
-                dom.setStyle(this._imgCursor, {
-                    top: `${event.pageY - editorPos.y}px`,
-                    left: `${event.pageX - editorPos.x}px`
-                });
-                reference = this._imgCursor;
-            }
-
-            this._popper = new UI.Popper(
-                this._popover,
-                {
-                    reference,
-                    arrow: this._popoverArrow,
-                    placement: 'bottom',
-                    position: 'left',
-                    minContact: 0,
-                    noAttributes: true
-                }
-            );
-
-            dom.show(this._popover);
-
-            switch (tagName) {
-                case 'a':
-                    this._renderPopoverItems(this._settings.popovers.link);
-                    break;
-                case 'img':
-                    this._renderPopoverItems(this._settings.popovers.image);
-                    this._highlightImage(this._currentNode);
-                    dom.show(this._imgHighlight);
-                    break;
-                case 'td':
-                    this._renderPopoverItems(this._settings.popovers.table);
-                    break;
-            }
-        },
-
-        /**
-         * Remove the popover.
-         */
-        _removePopover() {
-            if (!this._currentNode) {
-                return;
-            }
-
-            dom.hide(this._imgHighlight);
-            dom.hide(this._imgCursor);
-            dom.hide(this._popover);
-            dom.empty(this._popoverBody);
-
-            this._popper.dispose();
-            this._popper = null;
-            this._currentNode = null;
-        }
-
-    });
-
-
-    /**
-     * Editor Render Dropdowns
-     */
-
-    Object.assign(Editor.prototype, {
-
-        /**
-         * Render a color dropdown.
-         * @param {HTMLElement} dropdown The dropdown.
-         */
-        _colorDropdown(dropdown) {
-            const container = dom.create('div', {
-                class: this.constructor.classes.colorContainerRow
-            });
-
-            const col1 = dom.create('div', {
-                class: this.constructor.classes.colorContainerColumn
-            });
-
-            const col2 = dom.create('div', {
-                class: this.constructor.classes.colorContainerColumn
-            });
-
-            const foreLabel = dom.create('small', {
-                text: this.constructor.lang.dropdowns.colorForeground,
-                class: this.constructor.classes.colorLabel
-            });
-
-            const backLabel = dom.create('small', {
-                text: this.constructor.lang.dropdowns.colorBackground,
-                class: this.constructor.classes.colorLabel
-            });
-
-            dom.append(col1, foreLabel);
-            dom.append(col2, backLabel);
-
-            const foreDefaultContainer = dom.create('div', {
-                class: this.constructor.classes.colorLabelContainer
-            });
-            dom.append(col1, foreDefaultContainer);
-
-            const backDefaultContainer = dom.create('div', {
-                class: this.constructor.classes.colorLabelContainer
-            });
-            dom.append(col2, backDefaultContainer);
-
-            const foreDefault = dom.create('button', {
-                text: this.constructor.lang.dropdowns.colorDefault,
-                class: this.constructor.classes.colorDefaultBtn,
-                attributes: {
-                    type: 'button'
-                }
-            });
-            dom.append(foreDefaultContainer, foreDefault);
-
-            this._setToolbarData(foreDefault, {
-                command: 'foreColor',
-                value: 'initial'
-            });
-
-            const backDefault = dom.create('button', {
-                text: this.constructor.lang.dropdowns.colorTransparent,
-                class: this.constructor.classes.colorDefaultBtn,
-                attributes: {
-                    type: 'button'
-                }
-            });
-            dom.append(backDefaultContainer, backDefault);
-
-            this._setToolbarData(backDefault, {
-                command: 'backColor',
-                value: 'initial'
-            });
-
-            for (const colorRow of this.constructor.colors) {
-                const foreRow = dom.create('div', {
-                    class: this.constructor.classes.colorRow
-                });
-                dom.append(col1, foreRow);
-
-                const backRow = dom.create('div', {
-                    class: this.constructor.classes.colorRow
-                });
-                dom.append(col2, backRow);
-
-                for (const [colorName, color] of Object.entries(colorRow)) {
-                    const foreLink = dom.create('a', {
-                        class: this.constructor.classes.color,
-                        style: {
-                            backgroundColor: color,
-                            height: '20px'
-                        },
-                        attributes: {
-                            href: '#',
-                            title: colorName
-                        }
-                    });
-                    dom.append(foreRow, foreLink);
-
-                    UI.Tooltip.init(foreLink, {
-                        appendTo: document.body,
-                        placement: 'bottom'
-                    });
-
-                    this._setToolbarData(foreLink, {
-                        command: 'foreColor',
-                        value: color
-                    });
-
-                    const backLink = dom.create('a', {
-                        class: this.constructor.classes.color,
-                        style: {
-                            backgroundColor: color,
-                            height: '20px'
-                        },
-                        attributes: {
-                            href: '#',
-                            title: colorName
-                        }
-                    });
-                    dom.append(backRow, backLink);
-
-                    UI.Tooltip.init(backLink, {
-                        appendTo: document.body,
-                        placement: 'bottom'
-                    });
-
-                    this._setToolbarData(backLink, {
-                        command: 'backColor',
-                        value: color
-                    });
-                }
-            }
-
-            dom.append(container, col1);
-            dom.append(container, col2);
-
-            dom.setStyle(dropdown, 'minWidth', '350px');
-            dom.append(dropdown, container);
-        },
-
-        /**
-         * Render a font dropdown.
-         * @param {HTMLElement} dropdown The dropdown.
-         */
-        _fontDropdown(dropdown) {
-            const fonts = this._settings.fonts.sort();
-
-            for (const font of fonts) {
-                const button = dom.create('button', {
-                    text: font,
-                    class: this.constructor.classes.dropdownItem,
-                    style: {
-                        fontFamily: font
-                    },
-                    attributes: {
-                        type: 'button'
-                    }
-                });
-
-                const data = {
-                    command: 'fontName',
-                    value: font
-                };
-
-                this._buttons.push({ button, data });
-
-                this._setToolbarData(button, data);
-
-                dom.append(dropdown, button);
-            }
-        },
-
-        /**
-         * Render a font size dropdown.
-         * @param {HTMLElement} dropdown The dropdown.
-         */
-        _fontSizeDropdown(dropdown) {
-            const sizes = Object.values(this.constructor.fontSizes);
-
-            for (const size of sizes) {
-                const button = dom.create('button', {
-                    text: size,
-                    class: this.constructor.classes.dropdownItem,
-                    attributes: {
-                        type: 'button'
-                    }
-                });
-
-                const data = {
-                    command: 'fontSize',
-                    value: size
-                };
-
-                this._buttons.push({ button, data });
-
-                this._setToolbarData(button, data);
-
-                dom.append(dropdown, button);
-            }
-        },
-
-        /**
-         * Render a style dropdown.
-         * @param {HTMLElement} dropdown The dropdown.
-         */
-        _styleDropdown(dropdown) {
-            for (const tag of this.constructor.styles) {
-                const button = dom.create('button', {
-                    class: this.constructor.classes.dropdownItem,
-                    attributes: {
-                        type: 'button'
-                    }
-                });
-
-                const content = dom.create(tag, {
-                    text: this.constructor.lang.styles[tag],
-                    class: this.constructor.classes.styleContent
-                });
-
-                dom.append(button, content);
-
-                const data = {
-                    command: 'formatBlock',
-                    value: tag.toUpperCase()
-                };
-
-                this._buttons.push({ button, data });
-
-                this._setToolbarData(button, data);
-
-                dom.append(dropdown, button);
-            }
-        },
-
-        /**
-         * Render a table dropdown.
-         * @param {HTMLElement} dropdown The dropdown.
-         */
-        _tableDropdown(dropdown) {
-            const container = dom.create('div');
-
-            for (let i = 0; i < 10; i++) {
-                const row = dom.create('div', {
-                    class: this.constructor.classes.tableRow
-                });
-                dom.append(container, row);
-
-                for (let j = 0; j < 10; j++) {
-                    const cell = dom.create('div', {
-                        class: this.constructor.classes.tableCell
-                    });
-                    dom.append(row, cell);
-
-                    if (i > 4 || j > 4) {
-                        dom.hide(cell);
-                    }
-
-                    const link = dom.create('a', {
-                        class: this.constructor.classes.tableLink,
-                        attributes: {
-                            href: '#'
-                        },
-                        dataset: {
-                            uiColumn: j,
-                            uiRow: i
-                        },
-                        style: {
-                            marginRight: '1px',
-                            marginBottom: '1px',
-                            opacity: '0.5'
-                        }
-                    });
-                    dom.append(cell, link);
-                }
-            }
-
-            const info = dom.create('span', {
-                class: this.constructor.classes.tableInfo
-            });
-
-            dom.addClass(dropdown, this.constructor.classes.tableDropdown);
-            dom.append(dropdown, container);
-            dom.append(dropdown, info);
-
-            dom.addEventDelegate(container, 'click.ui.editor', 'a', e => {
-                const cols = dom.getDataset(e.currentTarget, 'uiColumn');
-                const rows = dom.getDataset(e.currentTarget, 'uiRow');
-
-                const table = dom.create('table', {
-                    class: this.constructor.classes.table
-                });
-
-                const tbody = dom.create('tbody');
-
-                for (let i = 0; i <= rows; i++) {
-                    const tr = dom.create('tr');
-
-                    for (let j = 0; j <= cols; j++) {
-                        const td = dom.create('td');
-                        dom.append(tr, td);
-                    }
-
-                    dom.append(tbody, tr);
-                }
-
-                dom.append(table, tbody);
-
-                const newTable = this._insertNode(table);
-
-                const firstTd = dom.findOne('td', newTable);
-                const range = this.constructor._selectNode(firstTd);
-                range.collapse(true);
-            });
-
-            dom.addEventDelegate(container, 'mouseover.ui.editor', 'a', e => {
-                const targetCol = dom.getDataset(e.currentTarget, 'uiColumn');
-                const targetRow = dom.getDataset(e.currentTarget, 'uiRow');
-
-                const colMin = Math.max(targetCol + 1, 4);
-                const rowMin = Math.max(targetRow + 1, 4);
-
-                const links = dom.find('a', container);
-
-                for (const element of links) {
-                    const col = dom.getDataset(element, 'uiColumn');
-                    const row = dom.getDataset(element, 'uiRow');
-
-                    if (col <= targetCol && row <= targetRow) {
-                        dom.addClass(element, this.constructor.classes.tableHover);
-                    } else {
-                        dom.removeClass(element, this.constructor.classes.tableHover);
-                    }
-
-                    const parent = dom.parent(element);
-                    if (col <= colMin && row <= rowMin) {
-                        dom.show(parent);
-                    } else {
-                        dom.hide(parent);
-                    }
-                }
-
-                dom.setText(info, `${targetCol + 1} x ${targetRow + 1}`);
-            });
-        }
-
-    });
-
-
-    /**
-     * Toolbar Render Popover
-     */
-
-    Object.assign(Editor.prototype, {
-
-        /**
-         * Render the popover elements.
-         */
-        _renderPopover() {
-            this._popover = dom.create('div', {
-                class: this.constructor.classes.popover,
-                attributes: {
-                    role: 'tooltip'
-                },
-                style: {
-                    maxWidth: 'initial'
-                }
-            });
-
-            this._popoverArrow = dom.create('div', {
-                class: this.constructor.classes.popoverArrow
-            });
-
-            this._popoverBody = dom.create('div', {
-                class: this.constructor.classes.popoverBody
-            });
-
-            dom.hide(this._popover);
-            dom.append(this._popover, this._popoverArrow);
-            dom.append(this._popover, this._popoverBody);
-            dom.append(this._container, this._popover);
-        },
-
-        /**
-         * Render a popover item.
-         * @param {string} type The item type.
-         * @param {HTMLElement} parent The parent element.
-         */
-        _renderPopoverItem(type, parent) {
-            const data = this.constructor.popovers[type];
-
-            let node;
-            if (data.render) {
-                node = data.render.bind(this)(this._currentNode);
-            } else {
-                node = this._renderButton({
-                    icon: type,
-                    title: this.constructor.lang.popovers[type],
-                    ...data
-                });
-
-                dom.setDataset(node, 'uiAction', type);
-            }
-
-            dom.append(parent, node);
-        },
-
-        /**
-         * Render popover items.
-         * @param {Array} items The items to render.
-         */
-        _renderPopoverItems(items) {
-            for (const item of items) {
-                if (Core.isString(item)) {
-                    this._renderPopoverItem(item, this._popoverBody);
-                } else {
-                    const node = dom.create('div', {
-                        class: this.constructor.classes.btnGroup,
-                        attributes: {
-                            role: 'group'
-                        }
-                    });
-
-                    for (const type of item) {
-                        this._renderPopoverItem(type, node);
-                    }
-
-                    dom.append(this._popoverBody, node);
-                }
-            }
-        },
-
-    });
-
-
-    /**
-     * Toolbar Render Toolbar
-     */
-
-    Object.assign(Editor.prototype, {
-
-        /**
-         * Render the toolbar.
-         */
-        _renderToolbar() {
-            const header = dom.create('div', {
-                class: this.constructor.classes.toolbar
-            });
-
-            this._toolbar = dom.create('div', {
-                class: this.constructor.classes.toolbarButtons,
-                attributes: {
-                    role: 'toolbar'
-                }
-            });
-
-            for (const buttons of this._settings.buttons) {
-                const buttonGroup = dom.create('div', {
-                    class: this.constructor.classes.btnGroup
-                });
-
-                for (const type of buttons) {
-                    this._renderToolbarButton(type, buttonGroup);
-                }
-
-                dom.append(this._toolbar, buttonGroup);
-            }
-
-            dom.append(header, this._toolbar);
-            dom.append(this._container, header);
-        },
-
-        /**
-         * Render a toolbar button.
-         * @param {string} type The button type.
-         * @param {HTMLElement} parent The parent element.
-         */
-        _renderToolbarButton(type, parent) {
-            const data = this.constructor.plugins[type];
-
-            const button = this._renderButton({
-                icon: type,
-                title: this.constructor.lang.plugins[type],
-                ...data
-            });
-
-            this._buttons.push({ button, data, type });
-
-            this._setToolbarData(button, data, type);
-
-            if ('dropdown' in data) {
-                this._renderToolbarDropdown(parent, button, data.dropdown);
-            } else {
-                dom.append(parent, button);
-            }
-        },
-
-        /**
-         * Render a toolbar dropdown.
-         * @param {HTMLElement} buttonGroup The button group element.
-         * @param {HTMLElement} button The button element.
-         * @param {Array|function} dropdownContent The dropdown content.
-         */
-        _renderToolbarDropdown(buttonGroup, button, dropdownContent) {
-            const dropGroup = dom.create('div', {
-                class: this.constructor.classes.dropdownGroup,
-                attributes: {
-                    role: 'group'
-                }
-            });
-
-            dom.addClass(button, this.constructor.classes.dropdownToggle);
-            dom.setDataset(button, 'uiToggle', 'dropdown');
-            dom.setAttribute(button, 'aria-has-popup', true);
-            dom.setAttribute(button, 'aria-expanded', false);
-            dom.append(dropGroup, button);
-
-            const dropdown = dom.create('div', {
-                class: this.constructor.classes.dropdown
-            });
-
-            if (Core.isArray(dropdownContent)) {
-                dom.addClass(dropdown, this.constructor.classes.dropdownButtons);
-
-                for (const dropdownItems of dropdownContent) {
-                    const subDropGroup = dom.create('div', {
-                        class: this.constructor.classes.btnGroup,
-                        attributes: {
-                            role: 'group'
-                        }
-                    });
-
-                    for (const type of dropdownItems) {
-                        this._renderToolbarButton(type, subDropGroup);
-                    }
-
-                    dom.append(dropdown, subDropGroup);
-                }
-            } else if (Core.isFunction(dropdownContent)) {
-                dropdownContent.bind(this)(dropdown);
-            }
-
-            dom.append(dropGroup, dropdown);
-            dom.append(buttonGroup, dropGroup);
-        },
-
-        /**
-         * Set data for a toolbar action.
-         * @param {HTMLElement} node The action node.
-         * @param {object} data The data to set.
-         * @param {string} [type] The action type.
-         */
-        _setToolbarData(node, data, type) {
-            if (data.command) {
-                dom.setDataset(node, 'uiCommand', data.command);
-
-                if (data.value) {
-                    dom.setDataset(node, 'uiValue', data.value);
-                }
-            } else if (data.action && type) {
-                dom.setDataset(node, 'uiAction', type);
-            }
-        }
-
-    });
-
-
-    /**
-     * Toolbar Render
-     */
-
-    Object.assign(Editor.prototype, {
-
-        /**
-         * Render the editor.
-         */
-        _render() {
-            this._container = dom.create('div', {
-                class: this.constructor.classes.container
-            });
-
-            this._renderToolbar();
-
-            this._editorBody = dom.create('div', {
-                class: this.constructor.classes.editorBody,
-                style: {
-                    height: this._settings.height
-                }
-            });
-
-            dom.append(this._container, this._editorBody);
-
-            this._renderEditor();
-            this._renderSource();
-            this._renderPopover();
-            this._renderDrop();
-
-            if (this._settings.resizable) {
-                this._renderResize();
-            }
-
-            const html = dom.getValue(this._node);
-            dom.setHTML(this._editor, html);
-            dom.setValue(this._source, html);
-
-            // hide the input node
-            dom.hide(this._node);
-            dom.setAttribute(this._node, 'tabindex', '-1');
-
-            dom.insertBefore(this._container, this._node);
-        },
-
-        /**
-         * Render a button
-         * @param {object} data The button data.
-         * @return {HTMLElement} The button.
-         */
-        _renderButton(data) {
-            const button = dom.create('button', {
-                class: this.constructor.classes.btn
-            });
-
-            if (data.setTitle) {
-                data.title = data.setTitle.bind(this)();
-            }
-
-            if (data.title) {
-                dom.setAttribute(button, 'title', data.title);
-
-                UI.Tooltip.init(button, {
-                    appendTo: document.body,
-                    placement: 'bottom'
-                });
-            }
-
-            if ('content' in data) {
-                dom.setHTML(button, data.content);
-            } else {
-                const content = dom.parseHTML(this.constructor.icons[data.icon]);
-                dom.addClass(content, this.constructor.classes.btnIcon);
-                dom.append(button, content);
-            }
-
-            return button;
-        },
-
-        /**
-         * Render the drop elements.
-         */
-        _renderDrop() {
-            this._dropTarget = dom.create('div', {
-                class: this.constructor.classes.dropTarget,
-                style: {
-                    minHeight: '100%',
-                    zIndex: 1
-                }
-            });
-
-            this._dropText = dom.create('span', {
-                text: this.constructor.lang.drop.dropHere,
-                class: this.constructor.classes.dropText
-            });
-
-            dom.append(this._dropTarget, this._dropText);
-            dom.hide(this._dropTarget);
-            dom.append(this._container, this._dropTarget);
-        },
-
-        /**
-         * Render the editor elements.
-         */
-        _renderEditor() {
-            this._editorScroll = dom.create('div', {
-                class: this.constructor.classes.editorScroll,
-                style: {
-                    zIndex: 1
-                }
-            });
-
-            this._editorContainer = dom.create('div', {
-                class: this.constructor.classes.editorContainer,
-                style: {
-                    minHeight: '100%'
-                }
-            });
-
-            this._editor = dom.create('div', {
-                class: this.constructor.classes.editor,
-                style: {
-                    minHeight: '100%',
-                    fontFamily: this._settings.defaultFont
-                }
-            });
-
-            this._imgHighlight = dom.create('div', {
-                class: this.constructor.classes.imgHighlight,
-                style: {
-                    backgroundColor: 'rgba(0, 0, 0, .15)',
-                    border: '1px dashed black'
-                }
-            });
-
-            this._imgCursor = dom.create('div', {
-                class: this.constructor.classes.imgCursor,
-                style: {
-                    width: '1rem',
-                    height: '1rem'
-                }
-            });
-
-            this._imgSizeInfo = dom.create('div', {
-                class: this.constructor.classes.imgSizeInfo,
-                style: {
-                    backgroundColor: 'rgba(0, 0, 0, .5)'
-                }
-            });
-
-            this._imgResize = dom.create('div', {
-                class: this.constructor.classes.imgResize,
-                style: {
-                    width: '5px',
-                    height: '5px',
-                    backgroundColor: 'black',
-                    cursor: 'nwse-resize'
-                }
-            });
-
-            dom.hide(this._imgHighlight);
-
-            dom.append(this._imgHighlight, this._imgSizeInfo);
-            dom.append(this._imgHighlight, this._imgResize);
-            dom.append(this._editorContainer, this._imgCursor);
-            dom.append(this._editorContainer, this._imgHighlight);
-            dom.append(this._editorContainer, this._editor);
-            dom.append(this._editorScroll, this._editorContainer);
-            dom.append(this._editorBody, this._editorScroll);
-        },
-
-        /**
-         * Render the resize bar.
-         */
-        _renderResize() {
-            this._resizeBar = dom.create('div', {
-                class: this.constructor.classes.resizeBar,
-                style: {
-                    padding: '1px 0',
-                    cursor: 'ns-resize'
-                }
-            });
-
-            for (let i = 0; i < 3; i++) {
-                const hr = dom.create('hr', {
-                    style: {
-                        width: '25px',
-                        margin: '1px auto 0'
-                    }
-                });
-                dom.append(this._resizeBar, hr);
-            }
-
-            dom.append(this._container, this._resizeBar);
-        },
-
-        /**
-         * Render the source elements.
-         */
-        _renderSource() {
-            this._sourceOuter = dom.create('div', {
-                class: 'w-100 overflow-hidden'
-            });
-
-            this._sourceContainer = dom.create('div', {
-                class: this.constructor.classes.sourceContainer,
-                style: {
-                    height: '100%'
-                }
-            });
-
-            this._lineNumbers = dom.create('div', {
-                class: this.constructor.classes.sourceLines
-            });
-
-            this._sourceScroll = dom.create('div', {
-                class: 'd-flex w-100'
-            });
-
-            this._source = dom.create('textarea', {
-                class: this.constructor.classes.source,
-                style: {
-                    resize: 'none'
-                }
-            });
-
-            dom.hide(this._sourceOuter);
-
-            dom.append(this._sourceScroll, this._source);
-            dom.append(this._sourceContainer, this._lineNumbers);
-            dom.append(this._sourceContainer, this._sourceScroll);
-            dom.append(this._sourceOuter, this._sourceContainer);
-            dom.append(this._editorBody, this._sourceOuter);
-        }
-
-    });
-
-
-    /**
-     * Editor (Static) Helpers
-     */
-
-    Object.assign(Editor, {
-
-        /**
-         * Generate a random ID.
-         * @returns {string} The id.
-         */
-        _generateId() {
-            return Core.randomString();
-        },
-
-        /**
-         * Get the current selected range.
-         * @returns {Range} The Range object.
-         */
-        _getRange() {
-            const selection = window.getSelection();
-
-            if (!selection.rangeCount) {
-                return null;
-            }
-
-            return selection.getRangeAt(0);
-        },
-
-        /**
-         * Select a node.
-         * @param {HTMLElement} node The element to select.
-         * @returns {Range} The Range object.
-         */
-        _selectNode(node) {
-            const range = dom.createRange();
-            range.selectNode(node);
-
-            this._selectRange(range);
-
-            return range;
-        },
-
-        /**
-         * Select a range.
-         * @param {Range} range The range to select.
-         */
-        _selectRange(range) {
-            if (!range) {
-                return;
-            }
-
-            const selection = window.getSelection();
-            selection.removeAllRanges();
-            selection.addRange(range);
-        }
-
-    });
-
-
-    /**
-     * Editor (Static) Modals
-     */
-
-    Object.assign(Editor, {
-
-        /**
-         * Create a form checkbox.
-         * @param {object} options Options for the checkbox.
-         * @returns {object} An object containing the form elements.
-         */
-        _createCheckbox(options) {
-            const group = dom.create('div', {
-                class: this.classes.formGroup
-            });
-
-            const inputContainer = dom.create('div', {
-                class: this.classes.checkboxContainer
-            });
-
-            const input = dom.create('input', {
-                class: this.classes.checkbox,
-                attributes: {
-                    id: options.id,
-                    type: 'checkbox',
-                    ...options.attributes
-                }
-            });
-
-            const label = dom.create('label', {
-                text: options.label,
-                attributes: {
-                    for: options.id
-                }
-            });
-
-            dom.append(inputContainer, input);
-            dom.append(inputContainer, label);
-            dom.append(group, inputContainer);
-
-            return { group, input };
-        },
-
-        /**
-         * Create a form file input.
-         * @param {object} options Options for the file input.
-         * @returns {object} An object containing the form elements.
-         */
-        _createFileInput(options) {
-            const group = dom.create('div', {
-                class: this.classes.formGroup
-            });
-
-            const label = dom.create('label', {
-                text: options.label,
-                attributes: {
-                    for: options.id
-                }
-            });
-
-            const inputContainer = dom.create('div', {
-                class: this.classes.inputContainer
-            });
-
-            const input = dom.create('input', {
-                attributes: {
-                    id: options.id,
-                    type: 'file',
-                    ...options.attributes
-                }
-            });
-
-            dom.append(group, label);
-            dom.append(inputContainer, input);
-            dom.append(group, inputContainer);
-
-            return { group, input };
-        },
-
-        /**
-         * Create a form text input.
-         * @param {object} options Options for the text input.
-         * @returns {object} An object containing the form elements.
-         */
-        _createInput(options) {
-            const group = dom.create('div', {
-                class: this.classes.formGroup
-            });
-
-            const label = dom.create('label', {
-                text: options.label,
-                attributes: {
-                    for: options.id
-                }
-            });
-
-            const inputContainer = dom.create('div', {
-                class: this.classes.inputContainer
-            });
-
-            const input = dom.create('input', {
-                class: this.classes.input,
-                attributes: {
-                    id: options.id,
-                    type: options.type || 'text',
-                    ...options.attributes
-                }
-            });
-
-            const ripple = dom.create('div', {
-                class: this.classes.inputRipple
-            });
-
-            const invalidFeedback = dom.create('div', {
-                class: this.classes.invalidFeedback
-            });
-
-            dom.append(group, label);
-            dom.append(inputContainer, input);
-            dom.append(inputContainer, ripple);
-            dom.append(group, inputContainer);
-            dom.append(group, invalidFeedback);
-
-            return { group, input, invalidFeedback };
-        },
-
-        /**
-         * Create a modal.
-         * @param {object} options Options for the modal.
-         * @returns {HTMLElement} The modal element.
-         */
-        _createModal(options) {
-            const modal = dom.create('div', {
-                class: this.classes.modal,
-                attributes: {
-                    tabindex: -1,
-                    role: 'dialog',
-                    'aria-model': true
-                }
-            });
-
-            const modalDialog = dom.create('div', {
-                class: this.classes.modalDialog
-            });
-
-            if (options.fullScreen) {
-                dom.addClass(modalDialog, this.classes.modalFullscreen);
-            }
-
-            const modalContent = dom.create('form', {
-                class: this.classes.modalContent
-            });
-
-            const modalHeader = dom.create('div', {
-                class: this.classes.modalHeader
-            });
-
-            const closeBtn = dom.create('button', {
-                class: this.classes.modalBtnClose,
-                dataset: {
-                    uiDismiss: 'modal'
-                },
-                attributes: {
-                    type: 'button',
-                    'aria-label': this.lang.modals.close
-                }
-            });
-
-            if (options.title) {
-                const modalTitle = dom.create('h5', {
-                    class: this.classes.modalTitle,
-                    text: options.title
-                });
-
-                dom.append(modalHeader, modalTitle);
-            }
-
-            dom.append(modalHeader, closeBtn);
-            dom.append(modalContent, modalHeader);
-
-            if (options.content) {
-                const modalBody = dom.create('div', {
-                    class: this.classes.modalBody
-                });
-
-                dom.append(modalBody, options.content);
-                dom.append(modalContent, modalBody);
-            }
-
-            if (options.onSubmit) {
-                const modalFooter = dom.create('div', {
-                    class: this.classes.modalFooter
-                });
-
-                const submitButton = dom.create('button', {
-                    text: options.submitText,
-                    class: this.classes.modalBtnPrimary,
-                    attributes: {
-                        type: 'submit'
-                    }
-                });
-
-                const cancelButton = dom.create('button', {
-                    text: options.cancelText,
-                    class: this.classes.modalBtnSecondary,
-                    dataset: {
-                        uiDismiss: 'modal'
-                    },
-                    attributes: {
-                        type: 'button'
-                    }
-                });
-
-                dom.append(modalFooter, submitButton);
-                dom.append(modalFooter, cancelButton);
-                dom.append(modalContent, modalFooter);
-
-                dom.addEvent(modalContent, 'submit', e => {
-                    e.preventDefault();
-
-                    if (options.onSubmit(e) === false) {
-                        return;
-                    }
-
-                    UI.Modal.init(modal).hide();
-                });
-            }
-
-            dom.append(modalDialog, modalContent);
-            dom.append(modal, modalDialog);
-            dom.append(document.body, modal);
-
-            if ('onShow' in options) {
-                dom.addEvent(modal, 'show.ui.modal', e => {
-                    options.onShow(e);
-                });
-            }
-
-            if ('onShown' in options) {
-                dom.addEvent(modal, 'shown.ui.modal', e => {
-                    options.onShown(e);
-                });
-            }
-
-            if ('onHide' in options) {
-                dom.addEvent(modal, 'hide.ui.modal', e => {
-                    options.onHide(e);
-                });
-            }
-
-            if ('onHidden' in options) {
-                dom.addEvent(modal, 'hidden.ui.modal', e => {
-                    options.onHidden(e);
-                });
-            }
-
-            UI.Modal.init(modal).show();
-
-            return modal;
-        }
-
-    });
-
-
-    /**
-     * Editor Values
-     */
-
-    Editor.buttons = [
+    const buttons = [
         ['style'],
         ['bold', 'italic', 'underline', 'removeFormat'],
         ['font'],
@@ -3069,10 +1053,10 @@
         ['unorderedList', 'orderedList', 'paragraph'],
         ['table'],
         ['link', 'image', 'video'],
-        ['fullScreen', 'source']
+        ['fullScreen', 'source'],
     ];
 
-    Editor.colors = [
+    const colors = [
         {
             'Black': '#000000',
             'Tundora': '#424242',
@@ -3081,7 +1065,7 @@
             'Pale Slate': '#CEC6CE',
             'Gallery': '#EFEFEF',
             'Alabaster': '#F7F7F7',
-            'White': '#FFFFFF'
+            'White': '#FFFFFF',
         },
         {
             'Red': '#FF0000',
@@ -3091,7 +1075,7 @@
             'Cyan': '#00FFFF',
             'Blue': '#0000FF',
             'Electric Violet': '#9C00FF',
-            'Magenta': '#FF00FF'
+            'Magenta': '#FF00FF',
         },
         {
             'Azalea': '#F7C6CE',
@@ -3101,7 +1085,7 @@
             'Botticelli': '#CEDEE7',
             'Tropical Blue': '#CEE7F7',
             'Mischka': '#D6D6E7',
-            'Twilight': '#E7D6DE'
+            'Twilight': '#E7D6DE',
         },
         {
             'Tonys Pink': '#E79C9C',
@@ -3111,7 +1095,7 @@
             'Casper': '#A5C6CE',
             'Perano': '#9CC6EF',
             'Cold Purple': '#B5A5D6',
-            'Careys Pink': '#D6A5BD'
+            'Careys Pink': '#D6A5BD',
         },
         {
             'Mandy': '#E76363',
@@ -3121,7 +1105,7 @@
             'Gulf Stream': '#73A5AD',
             'Viking': '#6BADDE',
             'Blue Marguerite': '#8C7BC6',
-            'Puce': '#C67BA5'
+            'Puce': '#C67BA5',
         },
         {
             'Guardsman Red': '#CE0000',
@@ -3131,7 +1115,7 @@
             'Smalt Blue': '#4A7B8C',
             'Boston Blue': '#3984C6',
             'Butterfly Bush': '#634AA5',
-            'Cadillac': '#A54A7B'
+            'Cadillac': '#A54A7B',
         },
         {
             'Sangria': '#9C0000',
@@ -3141,7 +1125,7 @@
             'Eden': '#104A5A',
             'Venice Blue': '#085294',
             'Meteorite': '#311873',
-            'Claret': '#731842'
+            'Claret': '#731842',
         },
         {
             'Rosewood': '#630000',
@@ -3151,11 +1135,11 @@
             'Tiber': '#083139',
             'Midnight Blue': '#003163',
             'Valentino': '#21104A',
-            'Loulou': '#4A1031'
-        }
+            'Loulou': '#4A1031',
+        },
     ];
 
-    Editor.fonts = [
+    const fonts = [
         'Arial',
         'Arial Black',
         'Comic Sans MS',
@@ -3167,20 +1151,20 @@
         'Tahoma',
         'Times New Roman',
         'Trebuchet MS',
-        'Verdana'
+        'Verdana',
     ];
 
-    Editor.fontSizes = {
+    const fontSizes = {
         1: 8,
         2: 13,
         3: 16,
         4: 18,
         5: 24,
         6: 32,
-        7: 48
+        7: 48,
     };
 
-    Editor.styles = [
+    const styles = [
         'p',
         'blockquote',
         'pre',
@@ -3189,36 +1173,2329 @@
         'h3',
         'h4',
         'h5',
-        'h6'
+        'h6',
     ];
 
+    /**
+     * Attach events for the Editor.
+     */
+    function _events() {
+        this._eventsToolbar();
+        this._eventsEditor();
+        this._eventsPopover();
+        this._eventsSource();
+        this._eventsDrop();
 
+        if (this._options.resizable) {
+            this._eventsResize();
+        }
+    }
+    /**
+     * Attach drop events.
+     */
+    function _eventsDrop() {
+        $.addEventDelegate(this._editor, 'dragstart.ui.editor', 'img', (e) => {
+            e.preventDefault();
+        });
+
+        $.addEvent(this._dropTarget, 'dragenter.ui.editor', (_) => {
+            $.addClass(this._dropText, this.constructor.classes.dropHover);
+            $.setText(this._dropText, this.constructor.lang.drop.drop);
+            $.show(this._dropTarget);
+        });
+
+        $.addEvent(this._dropTarget, 'dragleave.ui.editor', (_) => {
+            this._resetDropText();
+        });
+
+        $.addEvent(this._dropTarget, 'dragover.ui.editor', (e) => {
+            e.preventDefault();
+        });
+
+        $.addEvent(this._dropTarget, 'drop.ui.editor', (e) => {
+            e.preventDefault();
+
+            resetDragCount();
+
+            this._resetDropText();
+            $.hide(this._dropTarget);
+
+            if (e.dataTransfer.files.length) {
+                this._options.imageUpload.bind(this)(e.dataTransfer.files);
+            } else {
+                const text = e.dataTransfer.getData('text');
+                this.insertText(text);
+            }
+        });
+    }
+    /**
+     * Attach editor events.
+     */
+    function _eventsEditor() {
+        $.addEvent(this._editor, 'focus.ui.editor', (_) => {
+            $.triggerEvent(this._node, 'focus.ui.editor');
+        });
+
+        $.addEvent(this._editor, 'blur.ui.editor', (_) => {
+            $.triggerEvent(this._node, 'blur.ui.editor');
+        });
+
+        $.addEvent(this._editor, 'input.ui.editor', (e) => {
+            switch (e.inputType) {
+                case 'historyUndo':
+                    if (!$.isSame(document.activeElement, this._editor)) {
+                        return;
+                    }
+
+                    this.undo();
+                    break;
+                case 'historyRedo':
+                    if (!$.isSame(document.activeElement, this._editor)) {
+                        return;
+                    }
+
+                    this.redo();
+                    break;
+            }
+
+            if (e.inputType !== 'insertText') {
+                this._normalize();
+            }
+
+            this._updateValue();
+            this._checkEmpty();
+        });
+
+        $.addEvent(this._editor, 'keydown.ui.editor', (e) => {
+            if (this._options.keyDown) {
+                this._options.keyDown.bind(this)(e);
+            }
+
+            switch (e.code) {
+                case 'Backspace':
+                    if ($.contents(this._editor).length <= 1 && $.getText(this._editor) === '') {
+                        e.preventDefault();
+                    }
+
+                    break;
+                case 'Delete':
+                    const selection = window.getSelection();
+
+                    if (
+                        selection.isCollapsed &&
+                        $.isSame(selection.anchorNode, selection.focusNode) &&
+                        $.getText(selection.anchorNode) === ''
+                    ) {
+                        const nodes = [selection.anchorNode, ...$.parents(selection.anchorNode, null, this._editor)];
+
+                        if (nodes.every((node) => $.contents(node).length <= 1)) {
+                            const lastParent = nodes.pop();
+                            const nextParent = $.next(lastParent).shift();
+
+                            let formatElement = 'p';
+
+                            if (nextParent && $.is(nextParent, 'h1, h2, h3, h4, h5, h6, pre')) {
+                                formatElement = $.tagName(nextParent);
+                            }
+
+                            this._observe(false);
+                            this._execCommand('formatBlock', formatElement);
+                            this._observe();
+                        }
+                    }
+
+                    break;
+            }
+        });
+
+        $.addEvent(this._editorContainer, 'click.ui.editor', (_) => {
+            $.focus(this._editor);
+        });
+
+        $.addEventDelegate(this._editor, 'click.ui.editor', 'a, td, img', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            this._refreshPopover(e.currentTarget, e);
+            this._refreshToolbar();
+        }, { capture: true });
+
+        const mutationHandler = () => {
+            this._normalize();
+            this._updateValue();
+            this._checkEmpty();
+        };
+
+        this._observer = new MutationObserver(mutationHandler);
+
+        let observeLevel = 0;
+        let pendingMutations = [];
+        this._observe = (observe = true) => {
+            if (observe) {
+                observeLevel++;
+
+                if (observeLevel === 1) {
+                    this._observer.observe(this._editor, { attributes: true, childList: true, subtree: true });
+
+                    if (pendingMutations.length) {
+                        mutationHandler();
+                        pendingMutations = [];
+                    }
+                }
+            } else {
+                observeLevel--;
+
+                if (observeLevel === 0) {
+                    this._observer.disconnect();
+                    pendingMutations = this._observer.takeRecords();
+                }
+            }
+        };
+
+        this._observe();
+    }
+    /**
+     * Attach popover events.
+     */
+    function _eventsPopover() {
+        $.addEventDelegate(this._popover, 'click.ui.editor', '[data-ui-action]', (e) => {
+            const action = $.getDataset(e.currentTarget, 'uiAction');
+
+            if (!(action in this.constructor.popovers)) {
+                throw new Error(`Unknown action ${action}`);
+            }
+
+            e.preventDefault();
+
+            this.constructor.popovers[action].action.bind(this)(this._currentNode);
+            this._refreshPopover(this._currentNode);
+        });
+
+        const downEvent = (e) => {
+            if (!this._currentNode || !$.is(this._currentNode, 'img')) {
+                return false;
+            }
+
+            e.stopPropagation();
+
+            $.hide(this._imgCursor);
+            $.hide(this._popover);
+
+            this._observe(false);
+        };
+
+        const moveEvent = (e) => {
+            const imgRect = $.rect(this._currentNode, { offset: true });
+            const ratio = imgRect.width / imgRect.height;
+            const width = Math.max(
+                e.pageX - imgRect.x,
+                (e.pageY - imgRect.y) * ratio,
+                1,
+            );
+            $.setStyle(this._currentNode, { width: `${Math.round(width)}px` });
+            this._highlightImage(this._currentNode);
+        };
+
+        const upEvent = (_) => {
+            selectNode(this._currentNode);
+
+            const range = getRange();
+            range.collapse(false);
+
+            this._updateValue();
+            this._observe();
+        };
+
+        const dragEvent = $.mouseDragFactory(downEvent, moveEvent, upEvent);
+
+        $.addEvent(this._imgResize, 'mousedown.ui.editor', dragEvent);
+
+        $.addEvent(this._editorBody, 'scroll.ui.editor', (_) => {
+            this._removePopover();
+        });
+    }
+    /**
+     * Attach resize events.
+     */
+    function _eventsResize() {
+        let resizeOffset = 0;
+
+        const downEvent = (e) => {
+            const barPosition = $.position(this._resizeBar, { offset: true });
+            resizeOffset = e.pageY - barPosition.y;
+
+            this._removePopover();
+        };
+
+        const moveEvent = (e) => {
+            const editorPosition = $.position(this._editorBody, { offset: true });
+
+            const height = Math.max(0, e.pageY - editorPosition.y - resizeOffset);
+            $.setStyle(this._editorBody, { height: `${height}px` });
+        };
+
+        const upEvent = (_) => {
+            resizeOffset = 0;
+        };
+
+        const dragEvent = $.mouseDragFactory(downEvent, moveEvent, upEvent);
+
+        $.addEvent(this._resizeBar, 'mousedown.ui.editor', dragEvent);
+    }
+    /**
+     * Attach source events.
+     */
+    function _eventsSource() {
+        const refreshLineNumbersDebounced = $.debounce((_) => {
+            this._refreshLineNumbers();
+        });
+
+        $.addEvent(this._source, 'input.ui.editor', (_) => {
+            refreshLineNumbersDebounced();
+        });
+
+        $.addEvent(this._source, 'change.ui.editor', (_) => {
+            const html = $.getValue(this._source);
+
+            refreshLineNumbersDebounced();
+
+            this._addHistory({ html });
+
+            $.setHTML(this._editor, html);
+            $.setValue(this._node, html);
+            $.triggerEvent(this._node, 'change.ui.editor');
+        });
+
+        $.addEvent(this._source, 'keydown.ui.editor', (e) => {
+            if (e.key !== 'Tab') {
+                return;
+            }
+
+            e.preventDefault();
+
+            const start = $.getProperty(this._source, 'selectionStart');
+            const end = $.getProperty(this._source, 'selectionEnd');
+            const value = $.getValue(this._source);
+            const lines = value.split('\n');
+
+            const startLine = value.substring(0, start).split('\n').length - 1;
+            const endLine = value.substring(0, end).split('\n').length - 1;
+
+            const tab = '\t';
+
+            let newStart = start;
+            let newEnd = end;
+            let newValue;
+            if (e.shiftKey) {
+                for (const [i, line] of lines.entries()) {
+                    if (i >= startLine && i <= endLine && line.startsWith(tab)) {
+                        lines[i] = line.substring(1);
+
+                        if (i === startLine) {
+                            newStart--;
+                        }
+
+                        if (i < endLine) {
+                            newEnd--;
+                        }
+                    }
+                }
+
+                newValue = lines.join('\n');
+            } else if (startLine !== endLine) {
+                for (const [i, line] of lines.entries()) {
+                    if (i >= startLine && i <= endLine && (i < endLine || lines[i])) {
+                        lines[i] = tab + line;
+
+                        if (i < endLine) {
+                            newEnd++;
+                        }
+                    }
+                }
+
+                newValue = lines.join('\n');
+            } else {
+                newValue = value.substring(0, start) + '\t' + value.substring(end);
+
+                newStart++;
+
+                if (start === end) {
+                    newEnd++;
+                } else {
+                    newEnd = newStart;
+                }
+            }
+
+            $.select(this._source);
+            document.execCommand('insertText', false, newValue);
+            this._source.setSelectionRange(newStart, newEnd);
+        });
+
+        $.addEvent(this._source, 'scroll.ui.editor', $.debounce((_) => {
+            const scrollY = $.getScrollY(this._source);
+            $.setStyle(this._lineNumbers, { marginTop: `${-scrollY}px` });
+        }));
+    }
+    /**
+     * Attach toolbar events.
+     */
+    function _eventsToolbar() {
+        $.addEventDelegate(this._toolbar, 'click.ui.editor', '[data-ui-action]', (e) => {
+            const action = $.getDataset(e.currentTarget, 'uiAction');
+
+            if (!(action in this.constructor.plugins)) {
+                throw new Error(`Unknown action ${action}`);
+            }
+
+            e.preventDefault();
+
+            if (this._lastRange) {
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(this._lastRange);
+            }
+
+            this.constructor.plugins[action].action.bind(this)();
+        });
+
+        $.addEventDelegate(this._toolbar, 'click.ui.editor', '[data-ui-command]', (e) => {
+            const command = $.getDataset(e.currentTarget, 'uiCommand');
+
+            if (!(command in this)) {
+                throw new Error(`Unknown command ${command}`);
+            }
+
+            e.preventDefault();
+
+            if (this._lastRange) {
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(this._lastRange);
+            }
+
+            const value = $.getDataset(e.currentTarget, 'uiValue');
+            this[command](value);
+
+            this._refreshToolbar();
+        });
+    }
+
+    /**
+     * Check if the editor is empty and populate base markup.
+     */
+    function _checkEmpty() {
+        const html = $.getValue(this._node).trim();
+
+        if (html) {
+            return;
+        }
+
+        $.setHTML(this._editor, '<p><br></p>');
+    }
+    /**
+     * Execute a command.
+     * @param {string} command The command.
+     * @param {Boolean|string} [value] The command argument.
+     */
+    function _execCommand(command, value) {
+        if ($.is(this._node, ':disabled')) {
+            return;
+        }
+
+        this._focusEditor();
+
+        document.execCommand('styleWithCSS', false, ['backColor', 'fontName', 'fontSize', 'foreColor'].includes(command));
+
+        if (['insertOrderedList', 'insertUnorderedList'].includes(command)) {
+            this._observe(false);
+            document.execCommand('formatBlock', false, 'p');
+            this._observe();
+        }
+
+        document.execCommand(command, false, value);
+    }
+    /**
+     * Ensure the editor element has focus.
+     */
+    function _focusEditor() {
+        if ($.isSame(this._editor, document.activeElement) || $.hasDescendent(this._editor, document.activeElement)) {
+            return;
+        }
+
+        const selection = window.getSelection();
+
+        if (selection.anchorNode && $.hasDescendent(this._editor, selection.anchorNode)) {
+            return;
+        }
+
+        $.focus(this._editor);
+    }
+    /**
+     * Refresh the popover at cursor.
+     */
+    function _refreshCursor() {
+        const selection = window.getSelection();
+        const baseNode = selection.baseNode;
+
+        if (!$.hasDescendent(this._editor, baseNode)) {
+            this._removePopover();
+            return;
+        }
+
+        const currentNode = $.is(baseNode, 'a') ?
+            baseNode :
+            $.closest(baseNode, 'a', this._editor).shift();
+
+        if (!currentNode) {
+            this._removePopover();
+            return;
+        }
+
+        this._refreshPopover(currentNode);
+    }
+    /**
+     * Refresh the editor disabled.
+     */
+    function _refreshDisabled() {
+        if ($.is(this._node, ':disabled')) {
+            $.addClass(this._editor, this.constructor.classes.editorDisabled);
+            $.setStyle(this._editor, { opacity: .5 });
+            $.removeAttribute(this._editor, 'contenteditable');
+            $.setAttribute(this._editor, { 'aria-disabled': true });
+            $.setAttribute(this._source, { disabled: true });
+        } else {
+            $.removeClass(this._editor, this.constructor.classes.editorDisabled);
+            $.setStyle(this._editor, { opacity: '' });
+            $.setAttribute(this._editor, { contenteditable: true });
+            $.removeAttribute(this._editor, 'aria-disabled');
+            $.removeAttribute(this._source, 'disabled');
+        }
+    }
+    /**
+     * Refresh the source line numbers.
+     */
+    function _refreshLineNumbers() {
+        if (!$.isVisible(this._sourceContainer)) {
+            return;
+        }
+
+        const lineNumbers = $.contents(this._lineNumbers);
+
+        const html = $.getValue(this._source);
+        const lines = html.split('\n');
+
+        const test = $.create('div', {
+            style: {
+                width: $.width(this._source, { boxSize: $.CONTENT_BOX }),
+                padding: 0,
+                border: 0,
+                font: $.css(this._source, 'font'),
+                letterSpacing: $.css(this._source, 'letterSpacing'),
+                whiteSpace: $.css(this._source, 'whiteSpace'),
+                wordBreak: $.css(this._source, 'wordBreak'),
+                wordSpacing: $.css(this._source, 'wordSpacing'),
+                wordWrap: $.css(this._source, 'wordWrap'),
+            },
+        });
+
+        $.append(document.body, test);
+
+        for (const [i, line] of lines.entries()) {
+            let lineNumber;
+            if (i < lineNumbers.length) {
+                lineNumber = lineNumbers[i];
+            } else {
+                lineNumber = $.create('div', {
+                    text: i + 1,
+                });
+                $.append(this._lineNumbers, lineNumber);
+            }
+
+            $.setText(test, line || ' ');
+
+            const { height } = $.rect(test);
+
+            $.setStyle(lineNumber, {
+                height: `${height}px`,
+            });
+        }
+
+        $.detach(test);
+
+        if (lineNumbers.length > lines.length) {
+            $.detach(lineNumbers.slice(lines.length));
+        }
+    }
+    /**
+     * Refresh the toolbar.
+     */
+    function _refreshToolbar() {
+        this._focusEditor();
+
+        const isDisabled = $.is(this._node, ':disabled');
+        const isSource = $.isVisible(this._sourceContainer);
+
+        for (const { button, data, type } of this._buttons) {
+            if ('setContent' in data) {
+                const content = data.setContent.bind(this)();
+                $.setHTML(button, content);
+            }
+
+            let enabled = false;
+            if ('command' in data) {
+                enabled = 'value' in data ?
+                    document.queryCommandValue(data.command) === data.value :
+                    document.queryCommandState(data.command);
+            }
+
+            if (enabled) {
+                $.addClass(button, 'active');
+                $.setAttribute(button, { 'aria-pressed': true });
+            } else {
+                $.removeClass(button, 'active');
+                $.removeAttribute(button, 'aria-pressed');
+            }
+
+            if (
+                isDisabled ||
+                (isSource && !['source', 'fullScreen'].includes(type)) ||
+                ('disableCheck' in data && data.disableCheck.bind(this)())
+            ) {
+                $.addClass(button, 'disabled');
+                $.setAttribute(button, { 'aria-disabled': true });
+            } else {
+                $.removeClass(button, 'disabled');
+                $.removeAttribute(button, 'aria-disabled');
+            }
+        }
+    }
+    /**
+     * Reset the drop text.
+     */
+    function _resetDropText() {
+        $.removeClass(this._dropText, this.constructor.classes.dropHover);
+        $.setText(this._dropText, this.constructor.lang.drop.dropHere);
+    }
+    /**
+     * Show the drop target.
+     */
+    function _showDropTarget() {
+        if ($.is(this._node, ':disabled') || $.isVisible(this._sourceContainer)) {
+            return;
+        }
+
+        $.show(this._dropTarget);
+    }
+    /**
+     * Show the editor.
+     */
+    function _showEditor() {
+        $.show(this._editorScroll);
+        $.hide(this._sourceOuter);
+    }
+    /**
+     * Show the source.
+     */
+    function _showSource() {
+        $.show(this._sourceOuter);
+        $.setStyle(this._editorScroll, { display: 'none' }, null, { important: true });
+        $.hide(this._imgHighlight);
+
+        this._refreshLineNumbers();
+    }
+    /**
+     * Update the input value.
+     */
+    function _updateValue() {
+        const html = $.getHTML(this._editor);
+
+        if (html === $.getValue(this._node)) {
+            return;
+        }
+
+        this._redoHistory = [];
+
+        const selectionData = this._getSelectionData();
+
+        this._addHistory({ html, selectionData });
+
+        $.setValue(this._node, html);
+        $.setValue(this._source, html);
+
+        $.triggerEvent(this._node, 'change.ui.editor');
+    }
+
+    /**
+     * Get a node from a container path.
+     * @param {array} path The path.
+     * @param {HTMLElement} container The container.
+     * @return {Node|HTMLElement} The node.
+     */
+    function getNodeFromPath(path, container) {
+        let current = container;
+        for (const index of path) {
+            current = $.contents(current)[index];
+        }
+
+        return current;
+    }
+    /**
+     * Get the path to a node from a container.
+     * @param {Node|HTMLElement} node The node.
+     * @param {HTMLElement} container The container.
+     * @return {array} The path.
+     */
+    function getPathToNode(node, container) {
+        if ($.isSame(node, container)) {
+            return [];
+        }
+
+        return [...$.parents(node, null, container), node]
+            .map((node) => $.contents($.parent(node).shift()).indexOf(node));
+    }
+    /**
+     * Add an item to the history.
+     * @param {object} [data] The history data.
+     */
+    function _addHistory({ html, selectionData = null } = {}) {
+        this._history.push({ html, selectionData });
+
+        while (this._history.length > this._options.historyLimit) {
+            this._history.shift();
+        }
+    }
+    /**
+     * Get selection data for history.
+     * @return {object} The selection data.
+     */
+    function _getSelectionData() {
+        const { anchorNode, anchorOffset, focusNode, focusOffset } = window.getSelection();
+
+        if (
+            !anchorNode ||
+            !focusNode ||
+            (!$.isSame(this._editor, anchorNode) && !$.hasDescendent(this._editor, anchorNode)) ||
+            (!$.isSame(this._editor, focusNode) && !$.hasDescendent(this._editor, focusNode))
+        ) {
+            return null;
+        }
+
+        return {
+            anchorPath: getPathToNode(anchorNode, this._editor),
+            anchorOffset: anchorOffset,
+            focusPath: getPathToNode(focusNode, this._editor),
+            focusOffset: focusOffset,
+        };
+    }
+    /**
+     * Restore an item from history.
+     * @param {object} [data] The history data.
+     */
+    function _restoreHistory({ html, selectionData = null } = {}) {
+        this._observe(false);
+
+        $.setHTML(this._editor, html);
+        $.setValue(this._node, html);
+        $.setValue(this._source, html);
+
+        const selection = window.getSelection();
+
+        if (selectionData) {
+            const anchorNode = getNodeFromPath(selectionData.anchorPath, this._editor);
+            const focusNode = getNodeFromPath(selectionData.focusPath, this._editor);
+            selection.setBaseAndExtent(anchorNode, selectionData.anchorOffset, focusNode, selectionData.focusOffset);
+        } else {
+            selection.selectAllChildren(this._editor);
+            selection.collapseToEnd();
+        }
+
+        this._checkEmpty();
+        this._observe();
+    }
+
+    /**
+     * Remove the modal.
+     */
+    function _removeModal() {
+        if (!this._modal) {
+            return;
+        }
+
+        ui.Modal.init(this._modal).dispose();
+        $.remove(this._modal);
+        this._modal = null;
+    }
+    /**
+     * Show the image modal.
+     */
+    function _showImageModal() {
+        const container = $.create('div');
+
+        const { group: fileGroup, input: fileInput } = this.constructor._createFileInput({
+            id: ui.generateId('editor-image-file'),
+            label: this.constructor.lang.modals.imageFile,
+            attributes: {
+                accept: 'image/*',
+                multiple: true,
+            },
+        });
+
+        const { group: urlGroup, input: urlInput } = this.constructor._createInput({
+            id: ui.generateId('editor-image-url'),
+            label: this.constructor.lang.modals.imageUrl,
+        });
+
+        $.append(container, fileGroup);
+        $.append(container, urlGroup);
+
+        const originalRange = getRange();
+
+        this._focusEditor();
+
+        const range = getRange();
+        range.collapse();
+
+        this._modal = this.constructor._createModal({
+            title: this.constructor.lang.modals.insertImage,
+            content: container,
+            cancelText: this.constructor.lang.modals.cancel,
+            submitText: this.constructor.lang.modals.insertImage,
+            onSubmit: (_) => {
+                selectRange(range);
+
+                const files = $.getProperty(fileInput, 'files');
+                const src = $.getValue(urlInput);
+
+                if (files.length) {
+                    this._options.imageUpload.bind(this)(files);
+                } else if (src) {
+                    this.insertImage(src);
+                }
+            },
+            onShown: (_) => {
+                $.focus(fileInput);
+            },
+            onHidden: (_) => {
+                this._removeModal();
+                selectRange(originalRange);
+            },
+        });
+    }
+    /**
+     * Show the link modal.
+     * @param {HTMLElement} [link] The current link.
+     */
+    function _showLinkModal(link) {
+        const container = $.create('div');
+
+        const { group: textGroup, input: textInput } = this.constructor._createInput({
+            id: ui.generateId('editor-link-text'),
+            label: this.constructor.lang.modals.linkText,
+        });
+
+        const { group: urlGroup, input: urlInput } = this.constructor._createInput({
+            id: ui.generateId('editor-link-url'),
+            label: this.constructor.lang.modals.linkUrl,
+        });
+
+        const { group: newWindowGroup, input: newWindowInput } = this.constructor._createCheckbox({
+            id: ui.generateId('editor-link-new-window'),
+            label: this.constructor.lang.modals.linkNewWindow,
+        });
+
+        if (link) {
+            const text = $.getText(link);
+            const href = $.getAttribute(link, 'href');
+            const newWindow = $.getAttribute(link, 'target');
+
+            $.setValue(textInput, text);
+            $.setValue(urlInput, href);
+
+            if (newWindow === '_blank') {
+                $.setProperty(newWindowInput, { checked: true });
+            }
+        }
+
+        let hasText = false;
+
+        $.addEvent(textInput, 'input.ui.editor', (_) => {
+            hasText = !!$.getValue(textInput);
+        });
+
+        $.addEvent(urlInput, 'input.ui.editor', (_) => {
+            if (hasText) {
+                return;
+            }
+
+            const url = $.getValue(urlInput);
+            $.setValue(textInput, url);
+        });
+
+        $.append(container, textGroup);
+        $.append(container, urlGroup);
+        $.append(container, newWindowGroup);
+
+        const originalRange = getRange();
+
+        let range;
+        if (link) {
+            range = selectNode(link);
+        } else {
+            this._focusEditor();
+            range = getRange();
+        }
+
+        this._modal = this.constructor._createModal({
+            title: this.constructor.lang.modals.insertLink,
+            content: container,
+            cancelText: this.constructor.lang.modals.cancel,
+            submitText: this.constructor.lang.modals.insertLink,
+            onSubmit: (_) => {
+                selectRange(range);
+
+                const text = $.getValue(textInput);
+                const href = $.getValue(urlInput);
+                const newWindow = $.is(newWindowInput, ':checked');
+
+                this.insertLink(href, text, newWindow);
+            },
+            onShown: (_) => {
+                $.focus(urlInput);
+            },
+            onHidden: (_) => {
+                this._removeModal();
+                selectRange(originalRange);
+            },
+        });
+    }
+    /**
+     * Show the video modal.
+     */
+    function _showVideoModal() {
+        const container = $.create('div');
+
+        const { group: urlGroup, input: urlInput, invalidFeedback: urlInvalidFeedback } = this.constructor._createInput({
+            id: ui.generateId('editor-video-url'),
+            label: this.constructor.lang.modals.videoUrl,
+        });
+
+        $.append(container, urlGroup);
+
+        const originalRange = getRange();
+
+        this._focusEditor();
+        const range = getRange();
+
+        this._modal = this.constructor._createModal({
+            title: this.constructor.lang.modals.insertVideo,
+            content: container,
+            cancelText: this.constructor.lang.modals.cancel,
+            submitText: this.constructor.lang.modals.insertVideo,
+            onSubmit: (_) => {
+                selectRange(range);
+
+                const url = $.getValue(urlInput);
+                const match = url.match(/youtube\.com\/watch\?v=([\w]+)/i);
+
+                if (!match) {
+                    $.addClass(urlGroup, this.constructor.classes.formError);
+                    $.setText(urlInvalidFeedback, this.constructor.lang.modals.videoUrlInvalid);
+                    return false;
+                }
+
+                $.removeClass(urlGroup, this.constructor.classes.formError);
+
+                const id = match[1];
+                const video = $.create('iframe', {
+                    attributes: {
+                        width: 560,
+                        height: 315,
+                        src: `https://www.youtube.com/embed/${id}`,
+                        frameborder: 0,
+                        allowfullscreen: true,
+                    },
+                });
+
+                const html = $.getProperty(video, 'outerHTML');
+
+                this.insertHTML(html);
+            },
+            onShown: (_) => {
+                $.focus(urlInput);
+            },
+            onHidden: (_) => {
+                this._removeModal();
+                selectRange(originalRange);
+            },
+        });
+    }
+
+    const transparent = 'rgba(0, 0, 0, 0)';
+
+    /**
+     * Determine if a node is a form element.
+     * https://developer.mozilla.org/en-US/docs/Web/API/HTMLFormElement/elements
+     * @param {Node} node The input node.
+     * @return {Boolean} TRUE if the node is a form element, otherwise FALSE.
+     */
+    const isFormElement = (node) => $.is(node, 'button, fieldset, input, object, output, select, textarea');
+
+    /**
+     * Determine if a node is phrasing content.
+     * https://html.spec.whatwg.org/multipage/dom.html#phrasing-content
+     * @param {Node} node The input node.
+     * @return {Boolean} TRUE if the node is phrasing content, otherwise FALSE.
+     */
+    const isPhrasingContent = (node) => $._isText(node) || $.is(node, 'a, abbr, area, audio, b, bdi, bdo, br, button, cite, code, data, datalist, del, dfn, em, embed, i, iframe, img, input, ins, kbd, label, map, mark, math, meter, noscript, object, output, picture, progress, q, ruby, s, samp, script, select, slot, small, span, strong, sub, sup, svg, template, textarea, time, u, var, video, wbr');
+
+    /**
+     * Determine if a node is a void element.
+     * https://developer.mozilla.org/en-US/docs/Glossary/Void_element
+     * @param {Node} node The input node.
+     * @return {Boolean} TRUE if the node is a void element, otherwise FALSE.
+     */
+    const isVoidElement = (node) => $.is(node, 'area, base, br, col, embed, hr, img, input, link, meta, param, source, track, wbr');
+
+    /**
+     * Determine if a node is a phrasing container.
+     * @param {Node} node The input node.
+     * @return {Boolean} TRUE if the node is a phrasing container, otherwise FALSE.
+     */
+    const isPhrasingContainer = (node) => !$._isText(node) && isPhrasingContent(node) && !isVoidElement(node) && !isFormElement(node);
+
+    /**
+     * Join adjacent inline elements.
+     * @param {HTMLElement} container The container.
+     * @param {object} markers The selection markers.
+     */
+    function joinAdjacentNodes(container, markers) {
+        const elements = $.find('*', container);
+
+        const isMarker = (node) =>
+            (markers.start && $.isSame(node, markers.start)) ||
+            (markers.end && $.isSame(node, markers.end));
+
+        for (const element of elements) {
+            if (
+                isMarker(element) ||
+                !isPhrasingContainer(element)
+            ) {
+                continue;
+            }
+
+            const moveMarkers = [];
+            let next = element.nextSibling;
+            while (next && isMarker(next)) {
+                moveMarkers.push(next);
+                next = next.nextSibling;
+            }
+
+            if (
+                !next ||
+                !isPhrasingContainer(next) ||
+                !$.isEqual(element, next, { shallow: true })
+            ) {
+                continue;
+            }
+
+            $.prepend(next, $.contents(element));
+
+            if (moveMarkers.length) {
+                $.prepend(next, moveMarkers);
+            }
+
+            $.detach(element);
+        }
+    }
+    /**
+     * Normalize phrasing containers.
+     * @param {HTMLElement} container The container.
+     */
+    function normalizePhrasing(container) {
+        const elements = $.find('h1, h2, h3, h4, h5, h6, p, pre', container);
+
+        for (const element of elements) {
+            const contents = $.contents(element);
+
+            if (!contents.length) {
+                continue;
+            }
+
+            for (const [i, child] of contents.entries()) {
+                if (isPhrasingContent(child)) {
+                    continue;
+                }
+
+                const nextSiblings = contents.splice(i);
+                $.after(element, nextSiblings);
+                break;
+            }
+
+            if (!contents.length) {
+                $.detach(element);
+            }
+        }
+    }
+    /**
+     * Normalize span elements.
+     * @param {HTMLElement} container The container.
+     */
+    function normalizeSpans(container) {
+        const spans = $.find('span', container);
+
+        for (const span of spans) {
+            if ([...$.getProperty(span, 'attributes')].length) {
+                continue;
+            }
+
+            const contents = $.contents(span);
+
+            if (contents.length) {
+                $.after(span, contents);
+                next = contents[0];
+            }
+
+            $.detach(span);
+        }
+    }
+    /**
+     * Normalize style attributes.
+     * @param {HTMLElement} container The container.
+     */
+    function normalizeStyles(container) {
+        const styleNodes = $.find('[style]', container);
+
+        for (const styleNode of styleNodes) {
+            const styles = $.getStyle(styleNode);
+
+            for (const [style, value] of Object.entries(styles)) {
+                if (value === 'inherit') {
+                    $.removeStyle(styleNode, style);
+                    continue;
+                }
+
+                const clone = $.clone(styleNode, { deep: false });
+                $.after(styleNode, clone);
+                $.removeAttribute(clone, 'style');
+                let testValue = $.css(clone, style);
+                $.detach(clone);
+
+                if (style === 'background-color' && testValue === transparent) {
+                    testValue = [container, ...$.parents(styleNode, null, container)]
+                        .map((parent) => $.css(parent, style))
+                        .filter((parentStyle) => parentStyle !== transparent)
+                        .pop();
+                }
+
+                const cssValue = $.css(styleNode, style);
+
+                if (cssValue === testValue) {
+                    $.removeStyle(styleNode, style);
+                }
+            }
+
+            if ($.getAttribute(styleNode, 'style') === '') {
+                $.removeAttribute(styleNode, 'style');
+            }
+        }
+    }
+
+    /**
+     * Insert a (cloned) node into the editor.
+     * @param {HTMLElement} node The node to insert.
+     * @return {HTMLElement} The new node.
+     */
+    function _insertNode(node) {
+        this._focusEditor();
+
+        const range = getRange();
+        range.deleteContents();
+        range.insertNode(node);
+        range.collapse(false);
+
+        return node;
+    }
+    /**
+     * Normalize the editor.
+     */
+    function _normalize() {
+        this._observe(false);
+
+        $.normalize(this._editor);
+
+        const markers = saveSelection();
+
+        normalizeStyles(this._editor);
+        normalizeSpans(this._editor);
+        normalizePhrasing(this._editor);
+        joinAdjacentNodes(this._editor, markers);
+
+        restoreSelection(markers);
+
+        $.normalize(this._editor);
+
+        this._observe();
+    }
+    /**
+     * Update a table element.
+     * @param {HTMLElement} td The td element.
+     * @param {function} callback The callback.
+     */
+    function _updateTable(td, callback) {
+        const table = $.closest(td, 'table', this._editor).shift();
+
+        if (!table) {
+            return;
+        }
+
+        const tr = $.closest(td, 'tr', this._editor).shift();
+
+        callback(td, tr, table);
+
+        const range = selectNode(td);
+        range.collapse(true);
+    }
+
+    /**
+     * Highlight an image.
+     * @param {HTMLElement} image The image element.
+     */
+    function _highlightImage(image) {
+        $.hide(this._imgHighlight);
+        $.hide(this._imgCursor);
+
+        const imgRect = $.rect(image, { offset: true });
+        const editorPos = $.position(this._editor, { offset: true });
+        const scrollX = $.getScrollX(this._editorScroll);
+        const scrollY = $.getScrollY(this._editorScroll);
+        const imgX = Math.round(imgRect.x);
+        const imgY = Math.round(imgRect.y);
+        const imgWidth = Math.round(imgRect.width);
+        const imgHeight = Math.round(imgRect.height);
+
+        $.setStyle(this._imgHighlight, {
+            top: `${imgY - editorPos.y + scrollY - 2}px`,
+            left: `${imgX - editorPos.x + scrollX - 2}px`,
+            width: `${imgWidth + 2}px`,
+            height: `${imgHeight + 2}px`,
+        });
+
+        $.setText(this._imgSize, `${imgWidth}x${imgHeight}`);
+
+        if (imgWidth < 100 || imgHeight < 50) {
+            $.hide(this._imgSize);
+        } else {
+            $.show(this._imgSize);
+        }
+
+        $.show(this._imgHighlight);
+        $.show(this._imgCursor);
+    }
+    /**
+     * Refresh the popover.
+     * @param {HTMLElement} currentNode The current selected node.
+     * @param {Event} [event] The current event.
+     */
+    function _refreshPopover(currentNode, event) {
+        if ($.isSame(currentNode, this._currentNode)) {
+            return;
+        }
+
+        this._removePopover();
+
+        this._currentNode = currentNode;
+
+        if (!this._currentNode) {
+            return;
+        }
+
+        const tagName = $.tagName(this._currentNode);
+
+        let reference = this._currentNode;
+        if (event && tagName === 'img') {
+            const editorPos = $.position(this._editor, { offset: true });
+            const scrollX = $.getScrollX(this._editorScroll);
+            const scrollY = $.getScrollY(this._editorScroll);
+            $.setStyle(this._imgCursor, {
+                top: `${event.pageY - editorPos.y + scrollY}px`,
+                left: `${event.pageX - editorPos.x + scrollX}px`,
+            });
+            reference = this._imgCursor;
+        }
+
+        this._popper = new ui.Popper(
+            this._popover,
+            {
+                reference,
+                arrow: this._popoverArrow,
+                container: this._editor,
+                placement: 'bottom',
+                position: 'left',
+                minContact: 0,
+                noAttributes: true,
+            },
+        );
+
+        $.show(this._popover);
+
+        switch (tagName) {
+            case 'a':
+                this._renderPopoverItems(this._options.popovers.link);
+                break;
+            case 'img':
+                this._renderPopoverItems(this._options.popovers.image);
+                this._highlightImage(this._currentNode);
+                $.show(this._imgHighlight);
+                break;
+            case 'td':
+                this._renderPopoverItems(this._options.popovers.table);
+                break;
+        }
+
+        this._popper.update();
+    }
+    /**
+     * Remove the popover.
+     */
+    function _removePopover() {
+        if (!this._currentNode) {
+            return;
+        }
+
+        $.hide(this._imgHighlight);
+        $.hide(this._imgCursor);
+        $.hide(this._popover);
+        $.empty(this._popoverBody);
+
+        this._popper.dispose();
+        this._popper = null;
+        this._currentNode = null;
+    }
+
+    /**
+     * Render the editor.
+     */
+    function _render() {
+        this._container = $.create('div', {
+            class: this.constructor.classes.container,
+        });
+
+        this._renderToolbar();
+
+        this._editorBody = $.create('div', {
+            class: this.constructor.classes.editorBody,
+            style: {
+                height: this._options.height,
+            },
+        });
+
+        $.append(this._container, this._editorBody);
+
+        this._renderEditor();
+        this._renderSource();
+        this._renderPopover();
+        this._renderDrop();
+
+        if (this._options.resizable) {
+            this._renderResize();
+        }
+
+        // hide the input node
+        $.hide(this._node);
+        $.setAttribute(this._node, { tabindex: -1 });
+
+        $.insertBefore(this._container, this._node);
+    }
+    /**
+     * Render a button
+     * @param {object} data The button data.
+     * @return {HTMLElement} The button.
+     */
+    function _renderButton(data) {
+        const button = $.create('button', {
+            class: this.constructor.classes.btn,
+        });
+
+        if (data.setTitle) {
+            data.title = data.setTitle.bind(this)();
+        }
+
+        if (data.title) {
+            $.setAttribute(button, {
+                'title': data.title,
+                'aria-label': data.title,
+            });
+
+            ui.Tooltip.init(button, {
+                appendTo: document.body,
+                placement: 'bottom',
+            });
+        }
+
+        if ('content' in data) {
+            $.setHTML(button, data.content);
+        } else {
+            const content = $.parseHTML(this.constructor.icons[data.icon]);
+            $.addClass(content, this.constructor.classes.btnIcon);
+            $.append(button, content);
+        }
+
+        return button;
+    }
+    /**
+     * Render the drop elements.
+     */
+    function _renderDrop() {
+        this._dropTarget = $.create('div', {
+            class: this.constructor.classes.dropTarget,
+        });
+
+        this._dropText = $.create('span', {
+            text: this.constructor.lang.drop.dropHere,
+            class: this.constructor.classes.dropText,
+        });
+
+        $.append(this._dropTarget, this._dropText);
+        $.hide(this._dropTarget);
+        $.append(this._container, this._dropTarget);
+    }
+    /**
+     * Render the editor elements.
+     */
+    function _renderEditor() {
+        this._editorScroll = $.create('div', {
+            class: this.constructor.classes.editorScroll,
+        });
+
+        this._editorContainer = $.create('div', {
+            class: this.constructor.classes.editorContainer,
+        });
+
+        this._editor = $.create('div', {
+            class: this.constructor.classes.editor,
+            style: {
+                fontFamily: this._options.defaultFont,
+            },
+            attributes: {
+                'role': 'textbox',
+                'aria-multline': true,
+                'spellcheck': true,
+                'autocorrect': true,
+            },
+        });
+
+        this._imgHighlight = $.create('div', {
+            class: this.constructor.classes.imgHighlight,
+        });
+
+        this._imgCursor = $.create('div', {
+            class: this.constructor.classes.imgCursor,
+        });
+
+        this._imgSize = $.create('div', {
+            class: this.constructor.classes.imgSize,
+        });
+
+        this._imgResize = $.create('div', {
+            class: this.constructor.classes.imgResize,
+        });
+
+        $.hide(this._imgHighlight);
+
+        $.append(this._imgHighlight, this._imgSize);
+        $.append(this._imgHighlight, this._imgResize);
+        $.append(this._editorContainer, this._imgCursor);
+        $.append(this._editorContainer, this._imgHighlight);
+        $.append(this._editorContainer, this._editor);
+        $.append(this._editorScroll, this._editorContainer);
+        $.append(this._editorBody, this._editorScroll);
+    }
+    /**
+     * Render the resize bar.
+     */
+    function _renderResize() {
+        this._resizeBar = $.create('div', {
+            class: this.constructor.classes.resizeBar,
+        });
+
+        for (let i = 0; i < 3; i++) {
+            const hr = $.create('hr');
+            $.append(this._resizeBar, hr);
+        }
+
+        $.append(this._container, this._resizeBar);
+    }
+    /**
+     * Render the source elements.
+     */
+    function _renderSource() {
+        this._sourceOuter = $.create('div', {
+            class: this.constructor.classes.sourceOuter,
+        });
+
+        this._sourceContainer = $.create('div', {
+            class: this.constructor.classes.sourceContainer,
+        });
+
+        this._lineNumbers = $.create('div', {
+            class: this.constructor.classes.sourceLines,
+        });
+
+        this._sourceScroll = $.create('div', {
+            class: this.constructor.classes.sourceScroll,
+        });
+
+        this._source = $.create('textarea', {
+            class: this.constructor.classes.source,
+        });
+
+        $.hide(this._sourceOuter);
+
+        $.append(this._sourceScroll, this._source);
+        $.append(this._sourceContainer, this._lineNumbers);
+        $.append(this._sourceContainer, this._sourceScroll);
+        $.append(this._sourceOuter, this._sourceContainer);
+        $.append(this._editorBody, this._sourceOuter);
+    }
+
+    /**
+     * Render a color dropdown.
+     * @param {HTMLElement} dropdown The dropdown.
+     */
+    function _colorDropdown(dropdown) {
+        const container = $.create('li', {
+            class: this.constructor.classes.colorContainerRow,
+        });
+
+        const col1 = $.create('div', {
+            class: this.constructor.classes.colorContainerColumn,
+        });
+
+        const col2 = $.create('div', {
+            class: this.constructor.classes.colorContainerColumn,
+        });
+
+        const foreLabel = $.create('small', {
+            text: this.constructor.lang.dropdowns.colorForeground,
+            class: this.constructor.classes.colorLabel,
+        });
+
+        const backLabel = $.create('small', {
+            text: this.constructor.lang.dropdowns.colorBackground,
+            class: this.constructor.classes.colorLabel,
+        });
+
+        $.append(col1, foreLabel);
+        $.append(col2, backLabel);
+
+        const foreDefaultContainer = $.create('div', {
+            class: this.constructor.classes.colorLabelContainer,
+        });
+        $.append(col1, foreDefaultContainer);
+
+        const backDefaultContainer = $.create('div', {
+            class: this.constructor.classes.colorLabelContainer,
+        });
+        $.append(col2, backDefaultContainer);
+
+        const foreDefault = $.create('button', {
+            text: this.constructor.lang.dropdowns.colorDefault,
+            class: this.constructor.classes.colorDefaultBtn,
+            attributes: {
+                type: 'button',
+            },
+        });
+        $.append(foreDefaultContainer, foreDefault);
+
+        this._setToolbarData(foreDefault, {
+            command: 'foreColor',
+            value: 'initial',
+        });
+
+        const backDefault = $.create('button', {
+            text: this.constructor.lang.dropdowns.colorTransparent,
+            class: this.constructor.classes.colorDefaultBtn,
+            attributes: {
+                type: 'button',
+            },
+        });
+        $.append(backDefaultContainer, backDefault);
+
+        this._setToolbarData(backDefault, {
+            command: 'backColor',
+            value: 'initial',
+        });
+
+        for (const colorRow of this.constructor.colors) {
+            const foreRow = $.create('div', {
+                class: this.constructor.classes.colorRow,
+            });
+            $.append(col1, foreRow);
+
+            const backRow = $.create('div', {
+                class: this.constructor.classes.colorRow,
+            });
+            $.append(col2, backRow);
+
+            for (const [colorName, color] of Object.entries(colorRow)) {
+                const foreLink = $.create('button', {
+                    class: this.constructor.classes.color,
+                    style: {
+                        backgroundColor: color,
+                    },
+                    attributes: {
+                        'data-ui-title': colorName,
+                        'type': 'button',
+                        'aria-label': colorName,
+                    },
+                });
+                $.append(foreRow, foreLink);
+
+                ui.Tooltip.init(foreLink, {
+                    appendTo: document.body,
+                    placement: 'bottom',
+                });
+
+                this._setToolbarData(foreLink, {
+                    command: 'foreColor',
+                    value: color,
+                });
+
+                const backLink = $.create('button', {
+                    class: this.constructor.classes.color,
+                    style: {
+                        backgroundColor: color,
+                    },
+                    attributes: {
+                        'data-ui-title': colorName,
+                        'type': 'button',
+                        'aria-label': colorName,
+                    },
+                });
+                $.append(backRow, backLink);
+
+                UI.Tooltip.init(backLink, {
+                    appendTo: document.body,
+                    placement: 'bottom',
+                });
+
+                this._setToolbarData(backLink, {
+                    command: 'backColor',
+                    value: color,
+                });
+            }
+        }
+
+        $.append(container, col1);
+        $.append(container, col2);
+
+        $.setStyle(dropdown, { minWidth: '350px' });
+        $.append(dropdown, container);
+    }
+    /**
+     * Render a font dropdown.
+     * @param {HTMLElement} dropdown The dropdown.
+     */
+    function _fontDropdown(dropdown) {
+        const fonts = this._options.fonts.sort();
+
+        for (const font of fonts) {
+            const button = $.create('li', {
+                text: font,
+                class: this.constructor.classes.dropdownItem,
+                style: {
+                    fontFamily: font,
+                },
+                attributes: {
+                    'role': 'button',
+                    'aria-label': font,
+                },
+            });
+
+            const data = {
+                command: 'fontName',
+                value: font,
+            };
+
+            this._buttons.push({ button, data });
+
+            this._setToolbarData(button, data);
+
+            $.append(dropdown, button);
+        }
+    }
+    /**
+     * Render a font size dropdown.
+     * @param {HTMLElement} dropdown The dropdown.
+     */
+    function _fontSizeDropdown(dropdown) {
+        const sizes = Object.values(this.constructor.fontSizes);
+
+        for (const size of sizes) {
+            const button = $.create('li', {
+                text: size,
+                class: this.constructor.classes.dropdownItem,
+                attributes: {
+                    'role': 'button',
+                    'aria-label': size,
+                },
+            });
+
+            const data = {
+                command: 'fontSize',
+                value: size,
+            };
+
+            this._buttons.push({ button, data });
+
+            this._setToolbarData(button, data);
+
+            $.append(dropdown, button);
+        }
+    }
+    /**
+     * Render a style dropdown.
+     * @param {HTMLElement} dropdown The dropdown.
+     */
+    function _styleDropdown(dropdown) {
+        for (const tag of this.constructor.styles) {
+            const button = $.create('li', {
+                class: this.constructor.classes.dropdownItem,
+                attributes: {
+                    'role': 'button',
+                    'aria-label': this.constructor.lang.styles[tag],
+                },
+            });
+
+            const content = $.create(tag, {
+                text: this.constructor.lang.styles[tag],
+                class: this.constructor.classes.styleContent,
+            });
+
+            $.append(button, content);
+
+            const data = {
+                command: 'formatBlock',
+                value: tag.toUpperCase(),
+            };
+
+            this._buttons.push({ button, data });
+
+            this._setToolbarData(button, data);
+
+            $.append(dropdown, button);
+        }
+    }
+    /**
+     * Render a table dropdown.
+     * @param {HTMLElement} dropdown The dropdown.
+     */
+    function _tableDropdown(dropdown) {
+        const container = $.create('li');
+
+        for (let i = 0; i < 10; i++) {
+            const row = $.create('div', {
+                class: this.constructor.classes.tableRow,
+            });
+            $.append(container, row);
+
+            for (let j = 0; j < 10; j++) {
+                const cell = $.create('div', {
+                    class: this.constructor.classes.tableCell,
+                });
+                $.append(row, cell);
+
+                if (i > 4 || j > 4) {
+                    $.hide(cell);
+                }
+
+                const link = $.create('a', {
+                    class: this.constructor.classes.tableLink,
+                    attributes: {
+                        href: '#',
+                    },
+                    dataset: {
+                        uiColumn: j,
+                        uiRow: i,
+                    },
+                });
+                $.append(cell, link);
+            }
+        }
+
+        const info = $.create('span', {
+            class: this.constructor.classes.tableInfo,
+        });
+
+        $.addClass(dropdown, this.constructor.classes.tableDropdown);
+        $.append(dropdown, container);
+        $.append(dropdown, info);
+
+        $.addEventDelegate(container, 'click.ui.editor', 'a', (e) => {
+            const cols = $.getDataset(e.currentTarget, 'uiColumn');
+            const rows = $.getDataset(e.currentTarget, 'uiRow');
+
+            const container = $.create('div');
+
+            const table = $.create('table', {
+                class: this.constructor.classes.table,
+            });
+
+            const tbody = $.create('tbody');
+
+            for (let i = 0; i <= rows; i++) {
+                const tr = $.create('tr');
+
+                for (let j = 0; j <= cols; j++) {
+                    const td = $.create('td', {
+                        html: '<br>',
+                    });
+                    $.append(tr, td);
+                }
+
+                $.append(tbody, tr);
+            }
+
+            $.append(table, tbody);
+
+            $.append(container, table);
+
+            const br = $.create('br');
+
+            $.append(container, br);
+
+            const html = $.getHTML(container);
+
+            this.insertHTML(html);
+        });
+
+        $.addEventDelegate(container, 'mouseover.ui.editor', 'a', (e) => {
+            const targetCol = $.getDataset(e.currentTarget, 'uiColumn');
+            const targetRow = $.getDataset(e.currentTarget, 'uiRow');
+
+            const colMin = Math.max(targetCol + 1, 4);
+            const rowMin = Math.max(targetRow + 1, 4);
+
+            const links = $.find('a', container);
+
+            for (const element of links) {
+                const col = $.getDataset(element, 'uiColumn');
+                const row = $.getDataset(element, 'uiRow');
+
+                if (col <= targetCol && row <= targetRow) {
+                    $.addClass(element, this.constructor.classes.tableHover);
+                } else {
+                    $.removeClass(element, this.constructor.classes.tableHover);
+                }
+
+                const parent = $.parent(element);
+                if (col <= colMin && row <= rowMin) {
+                    $.show(parent);
+                } else {
+                    $.hide(parent);
+                }
+            }
+
+            $.setText(info, `${targetCol + 1} x ${targetRow + 1}`);
+        });
+    }
+
+    /**
+     * Render the popover elements.
+     */
+    function _renderPopover() {
+        this._popover = $.create('div', {
+            class: this.constructor.classes.popover,
+            attributes: {
+                role: 'tooltip',
+            },
+        });
+
+        this._popoverArrow = $.create('div', {
+            class: this.constructor.classes.popoverArrow,
+        });
+
+        this._popoverBody = $.create('div', {
+            class: this.constructor.classes.popoverBody,
+        });
+
+        $.hide(this._popover);
+        $.append(this._popover, this._popoverArrow);
+        $.append(this._popover, this._popoverBody);
+        $.append(this._container, this._popover);
+    }
+    /**
+     * Render a popover item.
+     * @param {string} type The item type.
+     * @param {HTMLElement} parent The parent element.
+     */
+    function _renderPopoverItem(type, parent) {
+        const data = this.constructor.popovers[type];
+
+        let node;
+        if (data.render) {
+            node = data.render.bind(this)(this._currentNode);
+        } else {
+            node = this._renderButton({
+                icon: type,
+                title: this.constructor.lang.popovers[type],
+                ...data,
+            });
+
+            $.setDataset(node, { uiAction: type });
+        }
+
+        $.append(parent, node);
+    }
+    /**
+     * Render popover items.
+     * @param {Array} items The items to render.
+     */
+    function _renderPopoverItems(items) {
+        for (const item of items) {
+            if ($._isString(item)) {
+                this._renderPopoverItem(item, this._popoverBody);
+            } else {
+                const node = $.create('div', {
+                    class: this.constructor.classes.btnGroup,
+                    attributes: {
+                        role: 'group',
+                    },
+                });
+
+                for (const type of item) {
+                    this._renderPopoverItem(type, node);
+                }
+
+                $.append(this._popoverBody, node);
+            }
+        }
+    }
+
+    /**
+     * Render the toolbar.
+     */
+    function _renderToolbar() {
+        const header = $.create('div', {
+            class: this.constructor.classes.toolbar,
+        });
+
+        this._toolbar = $.create('div', {
+            class: this.constructor.classes.toolbarButtons,
+            attributes: {
+                role: 'toolbar',
+            },
+        });
+
+        for (const buttons of this._options.buttons) {
+            const buttonGroup = $.create('div', {
+                class: this.constructor.classes.btnGroup,
+            });
+
+            for (const type of buttons) {
+                this._renderToolbarButton(type, buttonGroup);
+            }
+
+            $.append(this._toolbar, buttonGroup);
+        }
+
+        $.append(header, this._toolbar);
+        $.append(this._container, header);
+    }
+    /**
+     * Render a toolbar button.
+     * @param {string} type The button type.
+     * @param {HTMLElement} parent The parent element.
+     */
+    function _renderToolbarButton(type, parent) {
+        const data = this.constructor.plugins[type];
+
+        const button = this._renderButton({
+            icon: type,
+            title: this.constructor.lang.plugins[type],
+            ...data,
+        });
+
+        this._buttons.push({ button, data, type });
+
+        this._setToolbarData(button, data, type);
+
+        if ('dropdown' in data) {
+            this._renderToolbarDropdown(parent, button, data.dropdown);
+        } else {
+            $.append(parent, button);
+        }
+    }
+    /**
+     * Render a toolbar dropdown.
+     * @param {HTMLElement} buttonGroup The button group element.
+     * @param {HTMLElement} button The button element.
+     * @param {Array|function} dropdownContent The dropdown content.
+     */
+    function _renderToolbarDropdown(buttonGroup, button, dropdownContent) {
+        const dropGroup = $.create('div', {
+            class: this.constructor.classes.dropdownGroup,
+            attributes: {
+                role: 'group',
+            },
+        });
+
+        $.addClass(button, this.constructor.classes.dropdownToggle);
+        $.setDataset(button, { uiToggle: 'dropdown' });
+        $.setAttribute(button, {
+            'aria-has-popup': true,
+            'aria-expanded': false,
+        });
+        $.append(dropGroup, button);
+
+        const dropdown = $.create('ul', {
+            class: this.constructor.classes.dropdown,
+        });
+
+        if ($._isArray(dropdownContent)) {
+            $.addClass(dropdown, this.constructor.classes.dropdownButtons);
+
+            for (const dropdownItems of dropdownContent) {
+                const subDropGroup = $.create('div', {
+                    class: this.constructor.classes.btnGroup,
+                    attributes: {
+                        role: 'group',
+                    },
+                });
+
+                for (const type of dropdownItems) {
+                    this._renderToolbarButton(type, subDropGroup);
+                }
+
+                $.append(dropdown, subDropGroup);
+            }
+        } else if ($._isFunction(dropdownContent)) {
+            dropdownContent.bind(this)(dropdown);
+        }
+
+        $.append(dropGroup, dropdown);
+        $.append(buttonGroup, dropGroup);
+    }
+    /**
+     * Set data for a toolbar action.
+     * @param {HTMLElement} node The action node.
+     * @param {object} data The data to set.
+     * @param {string} [type] The action type.
+     */
+    function _setToolbarData(node, data, type) {
+        if (data.command) {
+            $.setDataset(node, { uiCommand: data.command });
+
+            if (data.value) {
+                $.setDataset(node, { uiValue: data.value });
+            }
+        } else if (data.action && type) {
+            $.setDataset(node, { uiAction: type });
+        }
+    }
+
+    /**
+     * Create a form checkbox.
+     * @param {object} options Options for the checkbox.
+     * @return {object} An object containing the form elements.
+     */
+    function _createCheckbox(options) {
+        const group = $.create('div', {
+            class: this.classes.formGroup,
+        });
+
+        const inputContainer = $.create('div', {
+            class: this.classes.checkboxContainer,
+        });
+
+        const input = $.create('input', {
+            class: this.classes.checkbox,
+            attributes: {
+                id: options.id,
+                type: 'checkbox',
+                ...options.attributes,
+            },
+        });
+
+        const label = $.create('label', {
+            text: options.label,
+            attributes: {
+                for: options.id,
+            },
+        });
+
+        $.append(inputContainer, input);
+        $.append(inputContainer, label);
+        $.append(group, inputContainer);
+
+        return { group, input };
+    }
+    /**
+     * Create a form file input.
+     * @param {object} options Options for the file input.
+     * @return {object} An object containing the form elements.
+     */
+    function _createFileInput(options) {
+        const group = $.create('div', {
+            class: this.classes.formGroup,
+        });
+
+        const label = $.create('label', {
+            text: options.label,
+            attributes: {
+                for: options.id,
+            },
+        });
+
+        const inputContainer = $.create('div', {
+            class: this.classes.inputContainer,
+        });
+
+        const input = $.create('input', {
+            attributes: {
+                id: options.id,
+                type: 'file',
+                ...options.attributes,
+            },
+        });
+
+        $.append(group, label);
+        $.append(inputContainer, input);
+        $.append(group, inputContainer);
+
+        return { group, input };
+    }
+    /**
+     * Create a form text input.
+     * @param {object} options Options for the text input.
+     * @return {object} An object containing the form elements.
+     */
+    function _createInput(options) {
+        const group = $.create('div', {
+            class: this.classes.formGroup,
+        });
+
+        const label = $.create('label', {
+            text: options.label,
+            attributes: {
+                for: options.id,
+            },
+        });
+
+        const inputContainer = $.create('div', {
+            class: this.classes.inputContainer,
+        });
+
+        const input = $.create('input', {
+            class: this.classes.input,
+            attributes: {
+                id: options.id,
+                type: options.type || 'text',
+                ...options.attributes,
+            },
+        });
+
+        const ripple = $.create('div', {
+            class: this.classes.inputRipple,
+        });
+
+        const invalidFeedback = $.create('div', {
+            class: this.classes.invalidFeedback,
+        });
+
+        $.append(group, label);
+        $.append(inputContainer, input);
+        $.append(inputContainer, ripple);
+        $.append(group, inputContainer);
+        $.append(group, invalidFeedback);
+
+        return { group, input, invalidFeedback };
+    }
+    /**
+     * Create a modal.
+     * @param {object} options Options for the modal.
+     * @return {HTMLElement} The modal element.
+     */
+    function _createModal(options) {
+        const modal = $.create('div', {
+            class: this.classes.modal,
+            attributes: {
+                'tabindex': -1,
+                'role': 'dialog',
+                'aria-model': true,
+            },
+        });
+
+        const modalDialog = $.create('div', {
+            class: this.classes.modalDialog,
+        });
+
+        $.append(modal, modalDialog);
+
+        if (options.fullScreen) {
+            $.addClass(modalDialog, this.classes.modalFullscreen);
+        }
+
+        const modalContent = $.create('form', {
+            class: this.classes.modalContent,
+        });
+
+        $.append(modalDialog, modalContent);
+
+        const modalHeader = $.create('div', {
+            class: this.classes.modalHeader,
+        });
+
+        $.append(modalContent, modalHeader);
+
+        if (options.title) {
+            const modalTitle = $.create('h6', {
+                class: this.classes.modalTitle,
+                text: options.title,
+            });
+
+            $.append(modalHeader, modalTitle);
+        }
+
+        const closeBtn = $.create('button', {
+            class: this.classes.modalBtnClose,
+            dataset: {
+                uiDismiss: 'modal',
+            },
+            attributes: {
+                'type': 'button',
+                'aria-label': this.lang.modals.close,
+            },
+        });
+
+        $.append(modalHeader, closeBtn);
+
+        if (options.content) {
+            const modalBody = $.create('div', {
+                class: this.classes.modalBody,
+            });
+
+            $.append(modalBody, options.content);
+            $.append(modalContent, modalBody);
+        }
+
+        if (options.onSubmit) {
+            const modalFooter = $.create('div', {
+                class: this.classes.modalFooter,
+            });
+
+            $.append(modalContent, modalFooter);
+
+            const cancelButton = $.create('button', {
+                text: options.cancelText,
+                class: this.classes.modalBtnSecondary,
+                dataset: {
+                    uiDismiss: 'modal',
+                },
+                attributes: {
+                    type: 'button',
+                },
+            });
+
+            $.append(modalFooter, cancelButton);
+
+            const submitButton = $.create('button', {
+                text: options.submitText,
+                class: this.classes.modalBtnPrimary,
+                attributes: {
+                    type: 'submit',
+                },
+            });
+
+            $.append(modalFooter, submitButton);
+
+            $.addEvent(modalContent, 'submit', (e) => {
+                e.preventDefault();
+
+                if (options.onSubmit(e) === false) {
+                    return;
+                }
+
+                ui.Modal.init(modal).hide();
+            });
+        }
+
+        $.append(document.body, modal);
+
+        if ('onShow' in options) {
+            $.addEvent(modal, 'show.ui.modal', (e) => {
+                options.onShow(e);
+            });
+        }
+
+        if ('onShown' in options) {
+            $.addEvent(modal, 'shown.ui.modal', (e) => {
+                options.onShown(e);
+            });
+        }
+
+        if ('onHide' in options) {
+            $.addEvent(modal, 'hide.ui.modal', (e) => {
+                options.onHide(e);
+            });
+        }
+
+        if ('onHidden' in options) {
+            $.addEvent(modal, 'hidden.ui.modal', (e) => {
+                options.onHidden(e);
+            });
+        }
+
+        ui.Modal.init(modal).show();
+
+        return modal;
+    }
+
+    // Editor defaults
     Editor.defaults = {
         buttons: null,
         popovers: {
             image: [
                 ['imageFull', 'imageHalf', 'imageQuarter', 'imageOriginal'],
                 ['floatLeft', 'floatRight', 'floatNone'],
-                ['imageRemove']
+                ['imageRemove'],
             ],
             link: [
                 'link',
                 ['linkEdit'],
-                ['unlink']
+                ['unlink'],
             ],
             table: [
                 ['tableRowAfter', 'tableRowBefore', 'tableColumnBefore', 'tableColumnAfter'],
-                ['tableRowRemove', 'tableColumnRemove', 'tableRemove']
-            ]
+                ['tableRowRemove', 'tableColumnRemove', 'tableRemove'],
+            ],
         },
         imageUpload(files) {
+            const promises = [];
+
             for (const file of files) {
-                const reader = new FileReader();
-                reader.readAsDataURL(file);
-                reader.onload = _ => {
-                    this.insertImage(reader.result);
-                };
+                promises.push(new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (_) => {
+                        resolve(reader.result);
+                    };
+                    reader.onerror = (_) => {
+                        reject(new Error('Unable to read file'));
+                    };
+                    reader.readAsDataURL(file);
+                }));
             }
+
+            Promise.allSettled(promises)
+                .then((results) => {
+                    for (const result of results) {
+                        if (result.status !== 'fulfilled') {
+                            continue;
+                        }
+
+                        this.insertImage(result.value);
+                    }
+                });
         },
         keyDown(e) {
             if (!e.ctrlKey) {
@@ -3250,79 +3527,54 @@
 
             this[action]();
         },
-        keyDownSource(e) {
-            if (e.key !== 'Tab') {
-                return;
-            }
-
-            e.preventDefault();
-
-            // allow tab in source editor
-
-            const offset = dom.getProperty(this._source, 'selectionStart');
-            const value = dom.getValue(this._source);
-
-            let newValue, newOffset;
-            if (!e.shiftKey) {
-                newValue = value.substring(0, start) + '\t' + value.substring(start);
-                newOffset = offset + 1;
-            } else {
-                const lastChar = value.substring(start - 1, start);
-                if (lastChar !== '\t') {
-                    return;
-                }
-
-                newValue = value.substring(0, start - 1) + value.substring(start);
-                newOffset = offset - 1;
-            }
-
-            dom.setValue(this._source, newValue);
-            dom.setProperty(this._source, 'selectionStart', newOffset);
-            dom.setProperty(this._source, 'selectionEnd', newOffset);
-        },
         defaultFont: 'Arial',
         fonts: null,
         height: 'auto',
-        resizable: true
+        resizable: true,
+        historyLimit: 1000,
     };
 
+    // Editor classes
     Editor.classes = {
-        btn: 'btn btn-light btn-sm fs-6 lh-1',
+        btn: 'btn btn-editor btn-sm fs-6 lh-1',
         btnGroup: 'btn-group me-1 mb-1',
         btnIcon: 'pe-none',
         checkbox: 'input-check',
         checkboxContainer: 'form-check',
-        color: 'flex-grow-1 d-block',
+        color: 'editor-color flex-grow-1 d-block border-0',
+        colorBtnContent: 'fw-bold d-inline-block px-1 pe-none',
         colorContainerRow: 'row g-0',
         colorContainerColumn: 'col-6',
-        colorDefaultBtn: 'btn btn-light btn-sm d-block w-100 py-0',
+        colorDefaultBtn: 'btn btn-outline-editor btn-sm d-block w-100 py-0',
         colorLabel: 'd-block text-center',
         colorLabelContainer: 'p-2',
         colorRow: 'd-flex flex-row px-2',
-        container: 'card shadow-sm',
+        container: 'card overflow-hidden shadow-sm',
         dropdown: 'dropdown-menu',
         dropdownButtons: 'pt-2 pe-1 pb-1 ps-2 text-nowrap',
         dropdownGroup: 'btn-group',
         dropdownItem: 'dropdown-item',
+        dropdownItemDisabled: 'disabled',
         dropdownToggle: 'dropdown-toggle',
         dropHover: 'text-primary',
-        dropTarget: 'position-absolute w-100 text-center bg-white',
+        dropTarget: 'editor-drop-target position-absolute w-100 text-center',
         dropText: 'position-absolute top-50 translate-middle h5 pe-none',
-        editor: 'w-100 p-2 outline-0',
+        editor: 'editor w-100 p-2 outline-0',
         editorBody: 'card-body d-flex p-0',
-        editorContainer: 'position-relative d-flex',
-        editorDisabled: 'bg-light pe-none',
-        editorScroll: 'd-block w-100 overflow-auto',
+        editorContainer: 'editor-container position-relative',
+        editorDisabled: 'bg-body-tertiary pe-none',
+        editorScroll: 'editor-scroll d-block w-100 overflow-auto',
         formError: 'form-error',
         formGroup: 'mb-2',
-        imgCursor: 'position-absolute translate-middle pe-none',
-        imgHighlight: 'position-absolute pe-none',
-        imgResize: 'position-absolute top-100 start-100 translate-middle pe-auto',
-        imgSizeInfo: 'position-absolute bottom-0 end-0 text-end me-2 mb-2 py-1 px-3 rounded text-white',
+        imgCursor: 'editor-img-cursor position-absolute translate-middle pe-none',
+        imgHighlight: 'editor-img-highlight position-absolute pe-none',
+        imgResize: 'editor-img-resize position-absolute top-100 start-100 translate-middle pe-auto',
+        imgSize: 'editor-img-size position-absolute bottom-0 end-0 text-end me-2 mb-2 py-1 px-3 rounded',
         input: 'input-filled',
         inputContainer: 'form-input',
         inputRipple: 'ripple-line',
         invalidFeedback: 'invalid-feedback',
+        linkUrl: 'editor-link-url d-inline-block text-truncate me-1',
         modal: 'modal',
         modalBody: 'modal-body',
         modalBtnClose: 'btn-close',
@@ -3334,35 +3586,38 @@
         modalFullscreen: 'modal-fullscreen',
         modalHeader: 'modal-header',
         modalTitle: 'modal-title',
-        popover: 'popover',
+        popover: 'editor-popover popover',
         popoverArrow: 'popover-arrow',
         popoverBody: 'popover-body mb-n1 ms-n2 me-n3',
-        resizeBar: 'card-footer',
-        source: 'font-monospace outline-0 border-0 p-2 mb-0 w-100 text-nowrap',
-        sourceContainer: 'd-flex',
-        sourceLines: 'bg-light p-2 mb-0 border-end',
+        resizeBar: 'editor-resize card-footer',
+        source: 'editor-source font-monospace outline-0 border-0 p-2 mb-0 w-100',
+        sourceContainer: 'd-flex h-100',
+        sourceLines: 'font-monospace bg-body-secondary p-2 mb-0 border-end',
+        sourceOuter: 'w-100 overflow-hidden',
+        sourceScroll: 'd-flex w-100',
         styleContent: 'mb-1',
         table: 'table table-bordered',
         tableCell: 'flex-column',
         tableDropdown: 'p-2',
         tableHover: 'bg-primary',
         tableInfo: 'text-muted',
-        tableLink: 'btn btn-light d-block border-dark p-2 rounded-0',
+        tableLink: 'editor-table-link d-block border border-dark p-2 rounded-0',
         tableRow: 'd-flex flex-row',
         toolbar: 'card-header pt-1 pe-0 pb-0 ps-1',
-        toolbarButtons: 'btn-toolbar'
+        toolbarButtons: 'btn-toolbar',
     };
 
+    // Editor lang
     Editor.lang = {
         drop: {
             drop: 'Drop image or text',
-            dropHere: 'Drop image or text here'
+            dropHere: 'Drop image or text here',
         },
         dropdowns: {
             colorBackground: 'Background Color',
             colorDefault: 'Use Default',
             colorForeground: 'Foreground Color',
-            colorTransparent: 'Use Transparent'
+            colorTransparent: 'Use Transparent',
         },
         modals: {
             cancel: 'Cancel',
@@ -3376,7 +3631,7 @@
             linkText: 'Link Text',
             linkUrl: 'Link URL',
             videoUrl: 'Video URL',
-            videoUrlInvalid: 'Invalid video URL.'
+            videoUrlInvalid: 'Invalid video URL.',
         },
         plugins: {
             alignCenter: 'Align Center',
@@ -3408,7 +3663,7 @@
             undo: 'Undo',
             unlink: 'Unlink',
             unorderedList: 'Unordered List',
-            video: 'Video'
+            video: 'Video',
         },
         popovers: {
             imageFull: 'Full Size',
@@ -3427,7 +3682,7 @@
             tableRowAfter: 'Add Row After',
             tableRowBefore: 'Add Row Before',
             tableRowRemove: 'Remove Row',
-            unlink: 'Remove Link'
+            unlink: 'Remove Link',
         },
         styles: {
             p: 'Paragraph',
@@ -3438,18 +3693,83 @@
             h3: 'Header 3',
             h4: 'Header 4',
             h5: 'Header 5',
-            h6: 'Header 6'
-        }
+            h6: 'Header 6',
+        },
     };
 
-    Editor._baseMarkup = '<p><br></p>';
-    Editor._cssCommands = ['backColor', 'fontName', 'fontSize', 'foreColor'];
+    // Editor static
+    Editor.buttons = buttons;
+    Editor.colors = colors;
+    Editor.fonts = fonts;
+    Editor.fontSizes = fontSizes;
+    Editor.icons = icons;
+    Editor.plugins = plugins;
+    Editor.popovers = popovers;
+    Editor.styles = styles;
 
-    EditorSet._editors = [];
+    Editor._createCheckbox = _createCheckbox;
+    Editor._createFileInput = _createFileInput;
+    Editor._createInput = _createInput;
+    Editor._createModal = _createModal;
 
-    UI.initComponent('editor', Editor);
+    // Editor prototype
+    const proto = Editor.prototype;
 
-    UI.Editor = Editor;
-    UI.EditorSet = EditorSet;
+    proto._addHistory = _addHistory;
+    proto._checkEmpty = _checkEmpty;
+    proto._colorDropdown = _colorDropdown;
+    proto._events = _events;
+    proto._eventsDrop = _eventsDrop;
+    proto._eventsEditor = _eventsEditor;
+    proto._eventsPopover = _eventsPopover;
+    proto._eventsResize = _eventsResize;
+    proto._eventsSource = _eventsSource;
+    proto._eventsToolbar = _eventsToolbar;
+    proto._execCommand = _execCommand;
+    proto._focusEditor = _focusEditor;
+    proto._fontDropdown = _fontDropdown;
+    proto._fontSizeDropdown = _fontSizeDropdown;
+    proto._getSelectionData = _getSelectionData;
+    proto._highlightImage = _highlightImage;
+    proto._insertNode = _insertNode;
+    proto._normalize = _normalize;
+    proto._refreshCursor = _refreshCursor;
+    proto._refreshDisabled = _refreshDisabled;
+    proto._refreshLineNumbers = _refreshLineNumbers;
+    proto._refreshPopover = _refreshPopover;
+    proto._refreshToolbar = _refreshToolbar;
+    proto._removeModal = _removeModal;
+    proto._removePopover = _removePopover;
+    proto._render = _render;
+    proto._renderButton = _renderButton;
+    proto._renderDrop = _renderDrop;
+    proto._renderEditor = _renderEditor;
+    proto._renderPopover = _renderPopover;
+    proto._renderPopoverItem = _renderPopoverItem;
+    proto._renderPopoverItems = _renderPopoverItems;
+    proto._renderResize = _renderResize;
+    proto._renderSource = _renderSource;
+    proto._renderToolbar = _renderToolbar;
+    proto._renderToolbarButton = _renderToolbarButton;
+    proto._renderToolbarDropdown = _renderToolbarDropdown;
+    proto._resetDropText = _resetDropText;
+    proto._restoreHistory = _restoreHistory;
+    proto._setToolbarData = _setToolbarData;
+    proto._showDropTarget = _showDropTarget;
+    proto._showEditor = _showEditor;
+    proto._showImageModal = _showImageModal;
+    proto._showLinkModal = _showLinkModal;
+    proto._showSource = _showSource;
+    proto._showVideoModal = _showVideoModal;
+    proto._styleDropdown = _styleDropdown;
+    proto._tableDropdown = _tableDropdown;
+    proto._updateTable = _updateTable;
+    proto._updateValue = _updateValue;
 
-});
+    // Editor init
+    ui.initComponent('editor', Editor);
+
+    exports.Editor = Editor;
+
+}));
+//# sourceMappingURL=frost-ui-editor.js.map

@@ -1,6 +1,6 @@
 {
-    "name": "frostui-editor",
-    "version": "1.1.5",
+    "name": "@fr0st/ui-editor",
+    "version": "2.0.0",
     "description": "FrostUI-Editor is a free, open-source WYSIWYG editor for Javascript.",
     "keywords": [
         "ui",
@@ -15,15 +15,27 @@
         "url": "https://github.com/elusivecodes/FrostUI-Editor/issues",
         "email": "elusivecodes@gmail.com"
     },
-    "main": "./dist/frost-ui-editor.js",
+    "main": "src/js/index.js",
+    "type": "module",
     "files": [
-        "/dist/frost-ui-editor.js",
+        "dist",
         "/LICENSE",
-        "/README.md"
+        "/README.md",
+        "src"
     ],
     "scripts": {
-        "build": "node build.js",
-        "test": "echo \"Error: no test specified\" && exit 1"
+        "build": "npm run css && npm run js",
+        "css": "npm run css-compile && npm run css-prefix && npm run css-minify",
+        "css-compile": "sass --style expanded --source-map --embed-sources --no-error-css src/scss/editor.scss dist/frost-ui-editor.css",
+        "css-lint": "stylelint \"src/scss/**/*.scss\" --fix",
+        "css-minify": "cleancss -O1 --format breakWith=lf --with-rebase --source-map --source-map-inline-sources --output dist/frost-ui-editor.min.css dist/frost-ui-editor.css",
+        "css-prefix": "postcss --replace dist/frost-ui-editor.css",
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "js": "npm run js-compile && npm run js-minify",
+        "js-compile": "rollup --config",
+        "js-lint": "eslint --ext .js .",
+        "js-minify": "terser --compress passes=2 --mangle --source-map \"content=dist/frost-ui-editor.js.map\" --output dist/frost-ui-editor.min.js dist/frost-ui-editor.js",
+        "sass-unused": "fusv src/scss"
     },
     "repository": {
         "type": "git",
@@ -33,7 +45,18 @@
     "license": "MIT",
     "private": false,
     "devDependencies": {
-        "filepath": "^1.1.0",
-        "terser": "^4.8.0"
+        "@rollup/plugin-node-resolve": "^15.2.3",
+        "autoprefixer": "^10.4.17",
+        "clean-css-cli": "^5.6.3",
+        "eslint": "^8.56.0",
+        "eslint-config-google": "^0.14.0",
+        "find-unused-sass-variables": "^5.0.0",
+        "postcss": "^8.4.33",
+        "postcss-cli": "^11.0.0",
+        "rollup": "^4.9.6",
+        "sass": "^1.70.0",
+        "stylelint": "^15.11.0",
+        "stylelint-config-twbs-bootstrap": "^12.0.0",
+        "terser": "^5.27.0"
     }
 }

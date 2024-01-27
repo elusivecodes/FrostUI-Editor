@@ -5,8 +5,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FrostUI Editor Methods</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/elusivecodes/frostui@1.4.6/dist/frost-ui.css">
-    <script src="https://cdn.jsdelivr.net/gh/elusivecodes/frostui@1.4.6/dist/frost-ui-bundle.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/elusivecodes/frostui@latest/dist/frost-ui.css">
+    <link rel="stylesheet" href="../dist/frost-ui-editor.css">
+    <script src="https://cdn.jsdelivr.net/gh/elusivecodes/frostui@latest/dist/frost-ui-bundle.js"></script>
     <script src="../dist/frost-ui-editor.js"></script>
 </head>
 
@@ -28,31 +29,31 @@
         </div>
     </div>
     <script>
-        const editor = dom.findOne('#editor');
-        const editorInit = dom.findOne('#editorInit');
-        const editorDispose = dom.findOne('#editorDispose');
-        const editorEnable = dom.findOne('#editorEnable');
-        const editorDisable = dom.findOne('#editorDisable');
+        const editor = $.findOne('#editor');
+        const editorInit = $.findOne('#editorInit');
+        const editorDispose = $.findOne('#editorDispose');
+        const editorEnable = $.findOne('#editorEnable');
+        const editorDisable = $.findOne('#editorDisable');
 
         UI.Editor.init(editor);
 
-        dom.addEvent(editorInit, 'click', e => {
+        $.addEvent(editorInit, 'click', e => {
             UI.Editor.init(editor);
         });
 
-        dom.addEvent(editorDispose, 'click', e => {
+        $.addEvent(editorDispose, 'click', e => {
             UI.Editor.init(editor).dispose();
         });
 
-        dom.addEvent(editorEnable, 'click', e => {
+        $.addEvent(editorEnable, 'click', e => {
             UI.Editor.init(editor).enable();
         });
 
-        dom.addEvent(editorDisable, 'click', e => {
+        $.addEvent(editorDisable, 'click', e => {
             UI.Editor.init(editor).disable();
         });
 
-        dom.triggerEvent(editorInit, 'click');
+        $.triggerEvent(editorInit, 'click');
     </script>
 </body>
 

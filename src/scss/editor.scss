@@ -1,0 +1,99 @@
+@import "vars";
+
+.editor-container {
+    min-height: 100%;
+}
+
+.editor-scroll {
+    z-index: 1;
+}
+
+.editor {
+    font-size: inherit;
+    font-weight: inherit;
+    color: inherit;
+    background-color: inherit;
+}
+
+.editor-resize {
+    padding: 1px 0;
+    cursor: ns-resize;
+
+    hr {
+        width: 25px;
+        margin: 1px auto 0;
+    }
+}
+
+.editor-source {
+    resize: none;
+}
+
+.editor-img-highlight {
+    background-color: $editor-img-highlight-bg;
+    border: $editor-img-highlight-border-width dashed $editor-img-highlight-border-color;
+}
+
+.editor-img-cursor {
+    width: $editor-img-cursor-size;
+    height: $editor-img-cursor-size;
+}
+
+.editor-img-size {
+    color: $editor-img-size-color;
+    background-color: $editor-img-size-bg;
+}
+
+.editor-img-resize {
+    width: $editor-img-resize-size;
+    height: $editor-img-resize-size;
+    cursor: nwse-resize;
+    background-color: $editor-img-resize-bg;
+}
+
+.editor-drop-target {
+    z-index: 1;
+    min-height: 100%;
+    background-color: $editor-drop-target-bg;
+}
+
+.editor-popover {
+    max-width: initial;
+}
+
+.editor-link-url {
+    max-width: $editor-link-url-max-width;
+    vertical-align: middle;
+}
+
+.editor-color {
+    height: $editor-color-height;
+}
+
+.editor-table-link {
+    margin-right: 1px;
+    margin-bottom: 1px;
+    opacity: .5;
+}
+
+.btn-editor {
+    --ui-btn-bg: #{$btn-editor-bg};
+    --ui-btn-border-color: #{$btn-border-color};
+    --ui-btn-color: #{$btn-editor-color};
+    --ui-btn-hover-bg: #{$btn-editor-hover-bg};
+    --ui-btn-hover-border-color: #{$btn-editor-hover-border-color};
+    --ui-btn-active-bg: #{$btn-editor-active-bg};
+    --ui-btn-focus-shadow-rgb: #{$btn-editor-focus-shadow-rgb};
+}
+
+.btn-outline-editor {
+    --ui-btn-bg: #{$btn-outline-editor-bg};
+    --ui-btn-border-color: #{$btn-outline-editor-border-color};
+    --ui-btn-color: #{$btn-outline-editor-color};
+    --ui-btn-hover-bg: #{$btn-outline-editor-hover-bg};
+    --ui-btn-hover-border-color: #{$btn-outline-editor-hover-border-color};
+    --ui-btn-active-bg: #{$btn-outline-editor-active-bg};
+    --ui-btn-active-color: #{$btn-outline-editor-active-color};
+    --ui-btn-active-border-color: #{$btn-outline-editor-active-border-color};
+    --ui-btn-focus-shadow-rgb: #{$btn-outline-editor-focus-shadow-rgb};
+}
